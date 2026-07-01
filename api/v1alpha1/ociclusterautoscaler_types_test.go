@@ -70,19 +70,17 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 					MaxNodes: ptr.To[int32](10),
 					Shape:    "VM.Standard.E4.Flex",
 					ShapeConfig: &ShapeConfig{
-						CPUs:   4,
-						Memory: 16,
+						CPUs:   ptr.To[int32](4),
+						Memory: ptr.To[int32](16),
 					},
 					ImageID:        "ocid1.image.oc1.test",
 					PoolIdentifier: "bm01",
 				},
 				CAPI: CAPIConfig{
-					Namespace:   "openshift-machine-api",
 					ClusterName: "test-cluster",
 				},
 				ClusterAutoscaler: ClusterAutoscalerConfig{
 					Name:                 "cluster-autoscaler",
-					Namespace:            "openshift-machine-api",
 					ServiceAccountName:   "cluster-autoscaler",
 					CloudProvider:        "oci",
 					CreateRBAC:           ptr.To(true),
@@ -247,6 +245,48 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 		Expect(err.Error()).To(ContainSubstring("spec.autoscaling.shapeConfig.memory"))
 	})
 
+	It("should prune unsupported namespace override fields", func() {
+		autoscaler := &unstructured.Unstructured{
+			Object: map[string]any{
+				"apiVersion": GroupVersion.String(),
+				"kind":       "OCIClusterAutoscaler",
+				"metadata": map[string]any{
+					"name":      "test-autoscaler-namespace-prune",
+					"namespace": namespace,
+				},
+				"spec": map[string]any{
+					"autoscaling": map[string]any{
+						"minNodes": int64(0),
+						"maxNodes": int64(1),
+					},
+					"capi": map[string]any{
+						"namespace":   "managed-a",
+						"clusterName": "cluster-a",
+					},
+					"clusterAutoscaler": map[string]any{
+						"namespace": "autoscaler-a",
+						"name":      "autoscaler-a",
+					},
+				},
+			},
+		}
+
+		Expect(k8sClient.Create(ctx, autoscaler)).To(Succeed())
+
+		stored := &unstructured.Unstructured{}
+		stored.SetAPIVersion(GroupVersion.String())
+		stored.SetKind("OCIClusterAutoscaler")
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "test-autoscaler-namespace-prune", Namespace: namespace}, stored)).To(Succeed())
+
+		_, found, err := unstructured.NestedString(stored.Object, "spec", "capi", "namespace")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeFalse())
+
+		_, found, err = unstructured.NestedString(stored.Object, "spec", "clusterAutoscaler", "namespace")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeFalse())
+	})
+
 	It("should validate autoscaler pool identifier format", func() {
 		autoscaler := &OCIClusterAutoscaler{
 			ObjectMeta: metav1.ObjectMeta{
@@ -372,12 +412,6 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 				},
 			},
 			{
-				name: "capi-namespace",
-				mutate: func(autoscaler *OCIClusterAutoscaler) {
-					autoscaler.Spec.CAPI.Namespace = "managed-b"
-				},
-			},
-			{
 				name: "capi-cluster-name",
 				mutate: func(autoscaler *OCIClusterAutoscaler) {
 					autoscaler.Spec.CAPI.ClusterName = "cluster-b"
@@ -387,12 +421,6 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 				name: "autoscaler-name",
 				mutate: func(autoscaler *OCIClusterAutoscaler) {
 					autoscaler.Spec.ClusterAutoscaler.Name = "autoscaler-b"
-				},
-			},
-			{
-				name: "autoscaler-namespace",
-				mutate: func(autoscaler *OCIClusterAutoscaler) {
-					autoscaler.Spec.ClusterAutoscaler.Namespace = "autoscaler-b"
 				},
 			},
 		}
@@ -410,12 +438,10 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 						PoolIdentifier: "bm01",
 					},
 					CAPI: CAPIConfig{
-						Namespace:   "managed-a",
 						ClusterName: "cluster-a",
 					},
 					ClusterAutoscaler: ClusterAutoscalerConfig{
-						Name:      "autoscaler-a",
-						Namespace: "autoscaler-a",
+						Name: "autoscaler-a",
 					},
 				},
 			}

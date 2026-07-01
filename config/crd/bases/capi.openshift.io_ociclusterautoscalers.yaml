@@ -105,14 +105,6 @@ spec:
                     x-kubernetes-validations:
                     - message: clusterName is immutable
                       rule: self == oldSelf
-                  namespace:
-                    description: Namespace where CAPI resources will be created
-                    maxLength: 63
-                    pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: namespace is immutable
-                      rule: self == oldSelf
                 type: object
               clusterAutoscaler:
                 description: ClusterAutoscaler deployment configuration
@@ -138,15 +130,6 @@ spec:
                     type: string
                     x-kubernetes-validations:
                     - message: name is immutable
-                      rule: self == oldSelf
-                  namespace:
-                    description: Namespace is the namespace where the cluster-autoscaler
-                      deployment will be installed
-                    maxLength: 63
-                    pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: namespace is immutable
                       rule: self == oldSelf
                   repositoryURL:
                     description: RepositoryURL is the URL for the helm chart of the

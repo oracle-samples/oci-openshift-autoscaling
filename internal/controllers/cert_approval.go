@@ -233,15 +233,11 @@ func (r *CertificateApprovalReconciler) certificateApprovalScopes(ctx context.Co
 		return nil, err
 	}
 	if found {
-		namespace := baseNamespace
-		if override := strings.TrimSpace(owner.Spec.CAPI.Namespace); override != "" {
-			namespace = override
-		}
 		clusterName := baseClusterName
 		if override := strings.TrimSpace(owner.Spec.CAPI.ClusterName); override != "" {
 			clusterName = override
 		}
-		addScope(namespace, clusterName)
+		addScope(baseNamespace, clusterName)
 		return scopes, nil
 	}
 

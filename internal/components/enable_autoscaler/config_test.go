@@ -7,6 +7,7 @@ package enableautoscaler
 
 import (
 	"context"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -78,8 +79,8 @@ var _ = Describe("Config", func() {
 				Shape:    "custom-shape",
 				ImageID:  "custom-image",
 				ShapeConfig: &ocicapioperatorv1alpha1.ShapeConfig{
-					CPUs:   4,
-					Memory: 8,
+					CPUs:   ptr.To[int32](4),
+					Memory: ptr.To[int32](8),
 				},
 			}
 
@@ -122,6 +123,34 @@ var _ = Describe("Config", func() {
 			Expect(result.AutoScalingConfig.Memory).To(Equal(int32(4)))
 			Expect(result.AutoScalingConfig.MaxNodes).To(Equal(int32(3)))
 			Expect(result.AutoScalingConfig.ImageID).To(Equal(""))
+		})
+
+		It("should reject explicit zero shape config values", func() {
+			instance.Spec.Autoscaling = ocicapioperatorv1alpha1.AutoscalingConfig{
+				ShapeConfig: &ocicapioperatorv1alpha1.ShapeConfig{
+					CPUs:   ptr.To[int32](0),
+					Memory: ptr.To[int32](8),
+				},
+			}
+
+			mockClient := &MockClient{}
+			_, err := SetAutoScalingConfig(ctx, mockClient, instance, config)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("shapeConfig.cpus must be greater than 0"))
+		})
+
+		It("should allow partial shape config overrides", func() {
+			instance.Spec.Autoscaling = ocicapioperatorv1alpha1.AutoscalingConfig{
+				ShapeConfig: &ocicapioperatorv1alpha1.ShapeConfig{
+					Memory: ptr.To[int32](16),
+				},
+			}
+
+			mockClient := &MockClient{}
+			result, err := SetAutoScalingConfig(ctx, mockClient, instance, config)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.AutoScalingConfig.CPUs).To(Equal(int32(2)))
+			Expect(result.AutoScalingConfig.Memory).To(Equal(int32(16)))
 		})
 
 		It("should treat explicit zero node counts as overrides", func() {
@@ -190,9 +219,36 @@ var _ = Describe("Config", func() {
 		It("should pass when DefinedTagsNamespace is set", func() {
 			cfg := config
 			cfg.AutoScalingConfig.Shape = "BM.Standard3.64"
-			cfg.AutoScalingConfig.DefinedTagsNamespace = "test-namespace"
+			cfg.AutoScalingConfig.DefinedTagsNamespace = "test.namespace_1"
 			err := ValidateDefinedTagsNamespace(cfg)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should reject DefinedTagsNamespace with whitespace", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "BM.Standard3.64"
+			cfg.AutoScalingConfig.DefinedTagsNamespace = "test namespace"
+			err := ValidateDefinedTagsNamespace(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("defined tags namespace"))
+		})
+
+		It("should reject DefinedTagsNamespace with path separators", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "BM.Standard3.64"
+			cfg.AutoScalingConfig.DefinedTagsNamespace = "test/namespace"
+			err := ValidateDefinedTagsNamespace(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("defined tags namespace"))
+		})
+
+		It("should reject DefinedTagsNamespace longer than 100 characters", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "BM.Standard3.64"
+			cfg.AutoScalingConfig.DefinedTagsNamespace = "a" + strings.Repeat("b", 100)
+			err := ValidateDefinedTagsNamespace(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("defined tags namespace"))
 		})
 
 		It("should pass for non-BM shape when DefinedTagsNamespace is empty", func() {

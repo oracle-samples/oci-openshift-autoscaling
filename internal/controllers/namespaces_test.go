@@ -73,13 +73,13 @@ func TestNamespaceConfigValidation(t *testing.T) {
 }
 
 func TestValidateOptionalNamespace(t *testing.T) {
-	if err := validateOptionalNamespace("spec.capi.namespace", ""); err != nil {
+	if err := validateOptionalNamespace("namespace", ""); err != nil {
 		t.Fatalf("validateOptionalNamespace(empty) error = %v, want nil", err)
 	}
-	if err := validateOptionalNamespace("spec.capi.namespace", "valid-ns"); err != nil {
+	if err := validateOptionalNamespace("namespace", "valid-ns"); err != nil {
 		t.Fatalf("validateOptionalNamespace(valid) error = %v, want nil", err)
 	}
-	if err := validateOptionalNamespace("spec.capi.namespace", "Invalid_Namespace"); err == nil {
+	if err := validateOptionalNamespace("namespace", "Invalid_Namespace"); err == nil {
 		t.Fatal("validateOptionalNamespace(invalid) error = nil, want error")
 	}
 }
@@ -108,21 +108,15 @@ func TestGetAutoscalerDeploymentValuesUsesConfiguredNamespaces(t *testing.T) {
 }
 
 func TestGetAutoscalerDeploymentValuesDefaultsDiscoveryToCAPIResourceNamespace(t *testing.T) {
-	instance := &capiv1alpha1.OCIClusterAutoscaler{
-		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
-			CAPI: capiv1alpha1.CAPIConfig{
-				Namespace: "capi-resource-ns",
-			},
-		},
-	}
+	instance := &capiv1alpha1.OCIClusterAutoscaler{}
 	namespaces := NamespaceConfig{
 		OperatorNamespace:        "operator-ns",
 		ManagedResourceNamespace: "managed-ns",
 	}
 
 	values := getAutoscalerDeploymentValues(instance, namespaces)
-	if values.AutoDiscoveryNamespace != "capi-resource-ns" {
-		t.Fatalf("AutoDiscoveryNamespace = %q, want capi-resource-ns", values.AutoDiscoveryNamespace)
+	if values.AutoDiscoveryNamespace != "managed-ns" {
+		t.Fatalf("AutoDiscoveryNamespace = %q, want managed-ns", values.AutoDiscoveryNamespace)
 	}
 }
 
@@ -155,11 +149,6 @@ func TestRequestsForOCIMachineUsesEffectiveManagedResourceNamespace(t *testing.T
 			Name:      "ociclusterautoscaler",
 			Namespace: "operator-ns",
 		},
-		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
-			CAPI: capiv1alpha1.CAPIConfig{
-				Namespace: "capi-resource-ns",
-			},
-		},
 	}
 	reconciler := &OCIClusterAutoscalerReconciler{
 		Client: fake.NewClientBuilder().
@@ -175,7 +164,7 @@ func TestRequestsForOCIMachineUsesEffectiveManagedResourceNamespace(t *testing.T
 	machine := &infrastructurev1beta2.OCIMachine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "machine-1",
-			Namespace: "capi-resource-ns",
+			Namespace: "managed-ns",
 		},
 	}
 	requests := reconciler.requestsForOCIMachine(ctx, machine)

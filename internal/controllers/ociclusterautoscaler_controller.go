@@ -524,12 +524,6 @@ func validate(instance *capiv1alpha1.OCIClusterAutoscaler, config enableautoscal
 	if err := enableautoscaler.ValidateMinMaxNodes(instance, config); err != nil {
 		return fmt.Errorf("invalid Min/Max nodes set in either the autoscaler spec or the config: %w", err)
 	}
-	if err := validateOptionalNamespace("spec.capi.namespace", instance.Spec.CAPI.Namespace); err != nil {
-		return err
-	}
-	if err := validateOptionalNamespace("spec.clusterAutoscaler.namespace", instance.Spec.ClusterAutoscaler.Namespace); err != nil {
-		return err
-	}
 	if err := validateOptionalObjectName("spec.capi.clusterName", instance.Spec.CAPI.ClusterName); err != nil {
 		return err
 	}
@@ -1153,11 +1147,6 @@ func clusterNameFor(ctx context.Context, reader client.Reader, instance *capiv1a
 
 func managedResourceNamespaceFor(instance *capiv1alpha1.OCIClusterAutoscaler, namespaces NamespaceConfig) string {
 	namespaces = namespaces.WithDefaults()
-	if instance != nil {
-		if namespace := strings.TrimSpace(instance.Spec.CAPI.Namespace); namespace != "" {
-			return namespace
-		}
-	}
 	return namespaces.ManagedResourceNamespace
 }
 

@@ -67,21 +67,15 @@ type AutoscalingConfig struct {
 type ShapeConfig struct {
 	// CPUs is the number of OCPUs
 	// +kubebuilder:validation:Minimum=1
-	CPUs int32 `json:"cpus,omitempty"`
+	CPUs *int32 `json:"cpus,omitempty"`
 
 	// Memory is the amount of memory in GB
 	// +kubebuilder:validation:Minimum=1
-	Memory int32 `json:"memory,omitempty"`
+	Memory *int32 `json:"memory,omitempty"`
 }
 
 // CAPIConfig contains Cluster API configuration
 type CAPIConfig struct {
-	// Namespace where CAPI resources will be created
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="namespace is immutable"
-	Namespace string `json:"namespace,omitempty"`
-
 	// ClusterName is the name of the CAPI cluster
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -99,12 +93,6 @@ type ClusterAutoscalerConfig struct {
 	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="name is immutable"
 	Name string `json:"name,omitempty"`
-
-	// Namespace is the namespace where the cluster-autoscaler deployment will be installed
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="namespace is immutable"
-	Namespace string `json:"namespace,omitempty"`
 
 	// ServiceAccountName is the name of the service account the cluster-autoscaler deployment will use
 	// +kubebuilder:validation:MaxLength=63

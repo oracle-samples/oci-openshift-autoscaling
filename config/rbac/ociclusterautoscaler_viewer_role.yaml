@@ -1,0 +1,26 @@
+# Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
+
+# permissions for end users to view ociclusterautoscalers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: oci-capi-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: ociclusterautoscaler-viewer-role
+rules:
+- apiGroups:
+  - capi.openshift.io
+  resources:
+  - ociclusterautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - capi.openshift.io
+  resources:
+  - ociclusterautoscalers/status
+  verbs:
+  - get

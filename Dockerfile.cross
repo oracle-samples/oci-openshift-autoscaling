@@ -5,7 +5,7 @@
 # Use the native build platform for the builder stage to avoid emulation-related
 # crashes (seen as SIGSEGV in `go mod download` on Apple Silicon when targeting
 # linux/amd64).
-FROM --platform=$BUILDPLATFORM golang:1.24 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG BUILDPLATFORM
 ARG TARGETPLATFORM
 ARG TARGETOS

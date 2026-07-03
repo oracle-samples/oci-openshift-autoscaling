@@ -1,0 +1,13 @@
+# Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
+
+providers:
+  # Core provider
+  - name: "cluster-api"
+    url: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.7.0/core-components.yaml"
+    type: "CoreProvider"
+  
+  # Infrastructure provider
+  - name: "oci"
+    url: "https://github.com/oracle/cluster-api-provider-oci/releases/download/CAPOCI_VERSION_PLACEHOLDER/infrastructure-components.yaml"
+    type: "InfrastructureProvider"

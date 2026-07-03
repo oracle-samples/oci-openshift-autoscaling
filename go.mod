@@ -179,12 +179,11 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/kustomize/api v0.20.1 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.20.1 // indirect
-	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.6.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
 
 replace (
+	github.com/google/gnostic-models => github.com/google/gnostic-models v0.6.8
 	github.com/openshift/oci-capi-operator/api => ./api
 	k8s.io/api => k8s.io/api v0.29.3
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.29.3
@@ -192,5 +191,6 @@ replace (
 	k8s.io/apiserver => k8s.io/apiserver v0.29.3
 	k8s.io/client-go => k8s.io/client-go v0.29.3
 	k8s.io/component-base => k8s.io/component-base v0.29.3
+	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20231010175941-2dd684a91f00
 	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.17.0
 )

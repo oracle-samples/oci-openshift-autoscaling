@@ -17,7 +17,7 @@ This project is intended for developers and operators who need to enable autosca
 - Local `kubeconfig` file for the OpenShift cluster.
 - Oracle Cloud Infrastructure CLI (`oci`) installed and configured.
 - OpenShift CLI (`oc`) installed.
-- Go 1.24 or later.
+- Go 1.25 or later.
 - Docker Desktop or another Docker-compatible container runtime with Buildx support.
 - `jq`, `curl`, `gzip`, and `openssl` available on your local machine.
 - OCI permissions to inspect compartments, virtual cloud networks, subnets, network security groups, load balancers, and custom images.

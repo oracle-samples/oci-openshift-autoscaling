@@ -44,16 +44,27 @@ spec:
         args:
           - init
         image: controller:latest
+        env:
+        - name: HOME
+          value: /tmp
+        - name: XDG_CACHE_HOME
+          value: /tmp/.cache
         envFrom:
         - configMapRef:
             name: oci-capi-operator-config
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop:
             - "ALL"
+          readOnlyRootFilesystem: true
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - command:
         - /manager
@@ -68,6 +79,7 @@ spec:
           capabilities:
             drop:
             - "ALL"
+          readOnlyRootFilesystem: true
         livenessProbe:
           httpGet:
             path: /healthz
@@ -88,6 +100,10 @@ spec:
             cpu: 10m
             memory: 128Mi
         env:
+        - name: HOME
+          value: /tmp
+        - name: XDG_CACHE_HOME
+          value: /tmp/.cache
         - name: OCI_CREDENTIALS_FINGERPRINT
           valueFrom:
             secretKeyRef:
@@ -111,3 +127,6 @@ spec:
             name: oci-capi-operator-config
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
+      volumes:
+      - name: tmp
+        emptyDir: {}

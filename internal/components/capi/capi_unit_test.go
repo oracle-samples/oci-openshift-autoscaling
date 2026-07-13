@@ -20,15 +20,18 @@ func TestGetComponentsOmitsPrivilegedBootstrapArtifacts(t *testing.T) {
 	}
 
 	component := GetComponents("oci-openshift-autoscaling-operator", "capoci-system", "capi-sa", "capoci-sa", instance, false)
-	if len(component.Subcomponents) != 2 {
-		t.Fatalf("expected 2 subcomponents, got %d", len(component.Subcomponents))
+	if len(component.Subcomponents) != 3 {
+		t.Fatalf("expected 3 subcomponents, got %d", len(component.Subcomponents))
 	}
 
 	if _, ok := component.Subcomponents[0].Object.(*securityv1.SecurityContextConstraints); !ok {
 		t.Fatalf("expected first subcomponent to be SCC, got %T", component.Subcomponents[0].Object)
 	}
-	if _, ok := component.Subcomponents[1].Object.(*corev1.Namespace); !ok {
-		t.Fatalf("expected second subcomponent to be Namespace, got %T", component.Subcomponents[1].Object)
+	if _, ok := component.Subcomponents[1].Object.(*securityv1.SecurityContextConstraints); !ok {
+		t.Fatalf("expected second subcomponent to be SCC, got %T", component.Subcomponents[1].Object)
+	}
+	if _, ok := component.Subcomponents[2].Object.(*corev1.Namespace); !ok {
+		t.Fatalf("expected third subcomponent to be Namespace, got %T", component.Subcomponents[2].Object)
 	}
 	for _, sub := range component.Subcomponents {
 		if sub.Name == "clusterRoleBinding" || sub.Name == "serviceAccountSecret" {

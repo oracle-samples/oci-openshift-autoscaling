@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 -->
 
@@ -10,11 +10,19 @@ The components this operator will deploy.
 Each component encapsulates all of the subcomponents required
 to deploy it.
 
+## Namespace contract
+
+The controller defaults provider controllers, managed Cluster API resources,
+cluster-autoscaler resources, and cluster-autoscaler autodiscovery to the
+operator pod namespace. Deployment-level namespace settings may override these
+defaults; the CR does not expose namespace overrides.
+
 ## Autoscaler
 
 Cluster autoscaler deployment uses the helm library.
 
 Additional components outside of the helm chart include:
+- Namespace CR for the operator namespace
 - ClusterRole CR
 - ClusterRoleBinding CR
 
@@ -23,17 +31,17 @@ Additional components outside of the helm chart include:
 CAPI deployment uses the clusterctl library.
 
 Additional components outside of the default clusterctl generation include:
-- SecurityContextConstraints (SCC) CR for both CAPI and CAPOCI
-- Namespace CR, default is `oci-openshift-autoscaling-operator`
+- Separate SecurityContextConstraints (SCC) CRs for CAPI and CAPOCI
+- Namespace CR for the operator namespace
 - ClusterRoleBinding CR
-- Secret for the service account 
+- Secret for the service account
 
 ## CAPOCI
 
 CAPOCI deployment uses the clusterctl library.
 
 Additional components outside of the default clusterctl generation include:
-- Namespace CR, default is `oci-openshift-autoscaling-operator`
+- Namespace CR for the operator namespace
 - Secret CR (auth config secret to authenticate to OCI)
 
 ## CRDs

@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -39,6 +39,7 @@ const (
 
 const (
 	skipAPIServerLBManagementAnnotation = "cluster.x-k8s.io/skip-apiserver-lb-management"
+	capiClusterAPIVersion               = "cluster.x-k8s.io/v1beta1"
 	ociInfrastructureAPIVersion         = "infrastructure.cluster.x-k8s.io/v1beta2"
 	ociClusterIdentityKind              = "OCIClusterIdentity"
 	ociClusterKind                      = "OCICluster"
@@ -58,6 +59,8 @@ const (
 	defaultNodeStartupTimeoutSeconds    = int64(600)
 	unhealthyNodeTimeoutSeconds         = int64(300)
 	workerRoleLabelValue                = "node-role.kubernetes.io/worker="
+	maxDNS1123LabelLength               = 63
+	maxNodePoolNameLength               = maxDNS1123LabelLength - len("-autoscaling")
 )
 
 func identityName(clusterName string) string {
@@ -83,9 +86,19 @@ func AutoscalingResourceName(clusterName string, instance *ocicapioperatorv1alph
 	return autoscalingName(NodePoolName(clusterName, instance))
 }
 
+func ValidateNodePoolName(nodePoolName string) error {
+	if len(nodePoolName) > maxNodePoolNameLength {
+		return fmt.Errorf("node pool name %q must be at most %d characters so generated CAPI resource names stay within %d characters", nodePoolName, maxNodePoolNameLength, maxDNS1123LabelLength)
+	}
+	if err := validateDNS1123Label("node pool name", nodePoolName); err != nil {
+		return err
+	}
+	return nil
+}
+
 func validateGeneratedNodePoolNames(clusterName string, instance *ocicapioperatorv1alpha1.OCIClusterAutoscaler) error {
 	nodePoolName := NodePoolName(clusterName, instance)
-	if err := validateDNS1123Label("node pool name", nodePoolName); err != nil {
+	if err := ValidateNodePoolName(nodePoolName); err != nil {
 		return err
 	}
 	if err := validateDNS1123Label("autoscaling resource name", autoscalingName(nodePoolName)); err != nil {
@@ -101,11 +114,21 @@ func validateDNS1123Label(field, value string) error {
 	return nil
 }
 
+func machineTemplateLabels(instanceName, clusterName, nodePoolName string) map[string]interface{} {
+	labels := map[string]interface{}{}
+	for key, value := range utils.GetDefaultLabels(instanceName) {
+		labels[key] = value
+	}
+	labels[capiClusterNameLabel] = clusterName
+	labels[capiDeploymentNameLabel] = nodePoolName
+	return labels
+}
+
 func bootstrapSecretName(clusterName string) string {
 	return fmt.Sprintf(bootstrapSecretNameFormat, clusterName)
 }
 
-func infrastructureRef(apiVersion, kind, name string) (map[string]interface{}, error) {
+func infrastructureRef(apiVersion, kind, namespace, name string) (map[string]interface{}, error) {
 	groupVersion, err := schema.ParseGroupVersion(strings.TrimSpace(apiVersion))
 	if err != nil {
 		return nil, fmt.Errorf("invalid infrastructure apiVersion %q: %w", apiVersion, err)
@@ -119,11 +142,15 @@ func infrastructureRef(apiVersion, kind, name string) (map[string]interface{}, e
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("infrastructureRef name must not be empty")
 	}
-	return map[string]interface{}{
-		"apiGroup": groupVersion.Group,
-		"kind":     kind,
-		"name":     name,
-	}, nil
+	ref := map[string]interface{}{
+		"apiVersion": groupVersion.String(),
+		"kind":       kind,
+		"name":       name,
+	}
+	if namespace := strings.TrimSpace(namespace); namespace != "" {
+		ref["namespace"] = namespace
+	}
+	return ref, nil
 }
 
 func validateCAPIInfrastructureRef(obj *unstructured.Unstructured, path ...string) error {
@@ -134,10 +161,16 @@ func validateCAPIInfrastructureRef(obj *unstructured.Unstructured, path ...strin
 	if !found {
 		return fmt.Errorf("infrastructureRef is required")
 	}
-	for _, field := range []string{"apiGroup", "kind", "name"} {
+	for _, field := range []string{"apiVersion", "kind", "name"} {
 		value, ok := ref[field].(string)
 		if !ok || strings.TrimSpace(value) == "" {
 			return fmt.Errorf("infrastructureRef.%s must not be empty", field)
+		}
+	}
+	if value, found := ref["namespace"]; found {
+		namespace, ok := value.(string)
+		if !ok || strings.TrimSpace(namespace) == "" {
+			return fmt.Errorf("infrastructureRef.namespace must not be empty when set")
 		}
 	}
 	return nil
@@ -385,7 +418,7 @@ func OCIClusterIdentity(capiSystemNamespace, clusterName string, instance *ocica
 func CAPICluster(capiSystemNamespace, clusterName string, instance *ocicapioperatorv1alpha1.OCIClusterAutoscaler, config Config) (client.Object, func() error) {
 	cluster := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "cluster.x-k8s.io/v1beta2",
+			"apiVersion": capiClusterAPIVersion,
 			"kind":       "Cluster",
 			"metadata": map[string]interface{}{
 				"name":      clusterName,
@@ -397,7 +430,7 @@ func CAPICluster(capiSystemNamespace, clusterName string, instance *ocicapiopera
 	mutateFn := func() error {
 		logger := ctrllog.Log.WithName("enableautoscaler").WithValues("component", "CAPICluster", "cluster", clusterName)
 		utils.SetDefaultLabels(cluster, instance.Name)
-		infraRef, err := infrastructureRef(ociInfrastructureAPIVersion, ociClusterKind, clusterName)
+		infraRef, err := infrastructureRef(ociInfrastructureAPIVersion, ociClusterKind, capiSystemNamespace, clusterName)
 		if err != nil {
 			return err
 		}
@@ -607,7 +640,7 @@ func MachineDeployment(capiSystemNamespace, clusterName string, instance *ocicap
 	nodePoolName := NodePoolName(clusterName, instance)
 	machineDeployment := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "cluster.x-k8s.io/v1beta2",
+			"apiVersion": capiClusterAPIVersion,
 			"kind":       "MachineDeployment",
 			"metadata": map[string]interface{}{
 				"name":      nodePoolName,
@@ -622,7 +655,7 @@ func MachineDeployment(capiSystemNamespace, clusterName string, instance *ocicap
 			return err
 		}
 		utils.SetDefaultLabels(machineDeployment, instance.Name)
-		infraRef, err := infrastructureRef(ociInfrastructureAPIVersion, ociMachineTemplateKind, autoscalingName(nodePoolName))
+		infraRef, err := infrastructureRef(ociInfrastructureAPIVersion, ociMachineTemplateKind, capiSystemNamespace, autoscalingName(nodePoolName))
 		if err != nil {
 			return err
 		}
@@ -673,7 +706,7 @@ func MachineDeployment(capiSystemNamespace, clusterName string, instance *ocicap
 		}
 		spec["template"] = map[string]interface{}{
 			"metadata": map[string]interface{}{
-				"labels": machineLabels,
+				"labels": machineTemplateLabels(instance.Name, clusterName, nodePoolName),
 			},
 			"spec": map[string]interface{}{
 				"clusterName": clusterName,
@@ -720,7 +753,7 @@ func MachineHealthCheck(capiSystemNamespace, clusterName string, instance *ocica
 	nodePoolName := NodePoolName(clusterName, instance)
 	machineHealthCheck := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "cluster.x-k8s.io/v1beta2",
+			"apiVersion": capiClusterAPIVersion,
 			"kind":       "MachineHealthCheck",
 			"metadata": map[string]interface{}{
 				"name":      autoscalingName(nodePoolName),

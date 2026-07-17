@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -40,40 +40,6 @@ else
 fi
 `
 
-const ociBootMarkerScript = `#!/usr/bin/env bash
-set -u
-
-function log {
-  local msg="oci-boot-marker: $*"
-  printf '%s\n' "${msg}" || true
-  printf '%s\n' "${msg}" >&2 || true
-  printf '%s\n' "${msg}" > /dev/console 2>/dev/null || true
-  printf '<4>%s\n' "${msg}" > /dev/kmsg 2>/dev/null || true
-  if command -v logger >/dev/null 2>&1; then
-    logger -t oci-boot-marker -- "$*" || true
-  fi
-}
-
-label="${1:-unknown}"
-target_ip="169.254.0.2"
-uptime="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || true)"
-boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
-
-log "MARK label=${label} pid=$$ uptime=${uptime} boot_id=${boot_id}"
-
-if command -v ip >/dev/null 2>&1; then
-  log "ADDR label=${label} $(ip -br addr show 2>&1 || true)"
-  log "ROUTE_GET label=${label} $(ip route get "${target_ip}" 2>&1 || true)"
-  log "DEFAULT_ROUTE label=${label} $(ip route show default 2>&1 || true)"
-fi
-
-if command -v systemctl >/dev/null 2>&1; then
-  log "SYSTEMD_STATE label=${label} default=$(systemctl get-default 2>&1 || true) failed=$(systemctl --failed --no-legend 2>&1 | wc -l | tr -d ' ' || true)"
-fi
-
-exit 0
-`
-
 const iscsiProtectPrimaryRouteScript = `#!/usr/bin/env bash
 set -u
 
@@ -101,43 +67,6 @@ l "WATCHDOG_DONE iterations=$iters"
 exit 0
 `
 
-const ociDNSDiagnosticScript = `#!/usr/bin/env bash
-set -u
-
-label="${1:-unknown}"
-ns="169.254.169.254"
-l(){ m="oci-dns-diagnostic: $*"; printf '%s\n' "$m" || true; printf '%s\n' "$m" >/dev/console 2>/dev/null || true; printf '<4>%s\n' "$m" >/dev/kmsg 2>/dev/null || true; command -v logger >/dev/null 2>&1 && logger -t oci-dns-diagnostic -- "$*" || true; }
-l "START label=${label} pid=$$"
-issue=none
-[ -L /etc/resolv.conf ] && [ ! -e /etc/resolv.conf ] && issue=broken_symlink
-[ "${issue}" = none ] && [ ! -e /etc/resolv.conf ] && issue=missing
-[ "${issue}" = none ] && ! grep -Eq '^[[:space:]]*nameserver[[:space:]]+' /etc/resolv.conf 2>/dev/null && issue=no_nameserver
-if [ "${issue}" = none ] && grep -Eq '^[[:space:]]*nameserver[[:space:]]+(::1|127\.0\.0\.1|127\.0\.0\.53)' /etc/resolv.conf 2>/dev/null && ! systemctl is-active --quiet systemd-resolved.service 2>/dev/null; then
-  issue=loopback_resolver_inactive
-fi
-
-l "RESULT label=${label} resolv_conf_issue=${issue}"
-if [ "${issue}" != none ]; then
-  l "FIX_START label=${label} reason=${issue} nameserver=${ns}"
-  tmp="/etc/resolv.conf.oci.$$"
-  [ -L /etc/resolv.conf ] && rm -f /etc/resolv.conf
-  { printf 'nameserver %s\n' "${ns}"; printf 'options timeout:1 attempts:3\n'; } > "${tmp}" 2>/dev/null && chmod 0644 "${tmp}" 2>/dev/null && mv -f "${tmp}" /etc/resolv.conf
-  rc=$?
-  [ "${rc}" -eq 0 ] && l "FIX_DONE label=${label} path=/etc/resolv.conf nameserver=${ns}" || l "FIX_FAILED label=${label} reason=${issue} rc=${rc}"
-  rm -f "${tmp}" 2>/dev/null || true
-else
-  rc=0
-fi
-
-tmp="/tmp/oci-dns-quay.$$"
-rc=0
-timeout 5 getent hosts quay.io > "${tmp}" 2>&1 || rc=$?
-rm -f "${tmp}" 2>/dev/null || true
-l "RESULT label=${label} resolve_quay_rc=${rc}"
-l "DONE label=${label}"
-exit 0
-`
-
 const iscsiProtectServiceUnit = `[Unit]
 Description=OCI iSCSI primary route protect watchdog
 DefaultDependencies=no
@@ -155,23 +84,6 @@ StandardError=journal+console
 WantedBy=sysinit.target
 `
 
-const ociDNSDiagnosticBeforeMCDPullServiceUnit = `[Unit]
-Description=OCI DNS diagnostic and resolv.conf protection before MCD firstboot image pull
-DefaultDependencies=no
-Wants=NetworkManager-wait-online.service
-After=NetworkManager.service NetworkManager-wait-online.service
-Before=machine-config-daemon-pull.service
-ConditionPathExists=/run/ostree-booted
-ConditionPathExists=/etc/ignition-machine-config-encapsulated.json
-
-[Service]
-Type=oneshot
-ExecStart=/etc/oci-iscsi/oci-dns-diagnostic.sh before-mcd-pull
-TimeoutStartSec=30
-StandardOutput=journal+console
-StandardError=journal+console
-`
-
 const setHostnameOCIServiceUnit = `[Unit]
 Description=Set hostname from OCI metadata
 After=network-online.target
@@ -180,9 +92,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStartPre=/etc/oci-iscsi/oci-boot-marker.sh set-hostname-oci-pre
 ExecStart=/usr/local/bin/set-hostname-oci.sh
-ExecStartPost=/etc/oci-iscsi/oci-boot-marker.sh set-hostname-oci-post
 
 [Install]
 WantedBy=multi-user.target
@@ -195,56 +105,10 @@ Before=NetworkManager-wait-online.service network-online.target ovs-configuratio
 
 [Service]
 Type=oneshot
-ExecStartPre=/etc/oci-iscsi/oci-boot-marker.sh oci-secondary-nic-pre
 ExecStart=/usr/local/bin/iscsi-oci-configure-secondary-nic.sh
-ExecStartPost=/etc/oci-iscsi/oci-boot-marker.sh oci-secondary-nic-post
 
 [Install]
 WantedBy=network-online.target multi-user.target
-`
-
-const ociBootMarkerMultiUserServiceUnit = `[Unit]
-Description=OCI boot marker for multi-user target transaction
-After=basic.target
-ConditionPathExists=/etc/oci-iscsi/oci-boot-marker.sh
-
-[Service]
-Type=oneshot
-ExecStart=/etc/oci-iscsi/oci-boot-marker.sh multi-user-target
-StandardOutput=journal+console
-StandardError=journal+console
-
-[Install]
-WantedBy=multi-user.target
-`
-
-const ociBootMarkerFirstbootOSUpdateServiceUnit = `[Unit]
-Description=OCI boot marker for firstboot osupdate target transaction
-DefaultDependencies=no
-Before=machine-config-daemon-firstboot.service
-ConditionPathExists=/etc/oci-iscsi/oci-boot-marker.sh
-
-[Service]
-Type=oneshot
-ExecStart=/etc/oci-iscsi/oci-boot-marker.sh firstboot-osupdate-target
-StandardOutput=journal+console
-StandardError=journal+console
-
-[Install]
-WantedBy=firstboot-osupdate.target
-`
-
-const networkManagerMarkerDropin = `[Service]
-ExecStartPre=/etc/oci-iscsi/oci-boot-marker.sh NetworkManager-ExecStartPre
-`
-
-const machineConfigDaemonFirstbootMarkerDropin = `[Service]
-ExecStartPre=/etc/oci-iscsi/oci-boot-marker.sh machine-config-daemon-firstboot-ExecStartPre
-`
-
-const machineConfigDaemonPullDNSDiagnosticDropin = `[Unit]
-Wants=oci-dns-diagnostic-before-mcd-pull.service
-After=oci-dns-diagnostic-before-mcd-pull.service
 `
 
 const iscsiProtectServiceLinkTarget = "../iscsi-protect-primary-route.service"
@@ -259,8 +123,8 @@ func GenerateIgnitionConfig(ctx context.Context, client client.Client) (string, 
 	apiServerInternalURL, _, _ = strings.Cut(apiServerInternalURL, ":")
 	logger.Info("Generating ignition config",
 		"apiServerHost", apiServerInternalURL,
-		"units", 5,
-		"embeddedFiles", 7,
+		"units", 3,
+		"embeddedFiles", 3,
 	)
 
 	machineConfigCA, err := GetMachineConfigCA(ctx, client)
@@ -270,9 +134,7 @@ func GenerateIgnitionConfig(ctx context.Context, client client.Client) (string, 
 	machineConfigCAB64 := base64.StdEncoding.EncodeToString([]byte(machineConfigCA))
 
 	setHostnameOCIScriptB64 := base64.StdEncoding.EncodeToString([]byte(setHostnameOCIScript))
-	ociBootMarkerScriptB64 := base64.StdEncoding.EncodeToString([]byte(ociBootMarkerScript))
 	iscsiProtectPrimaryRouteScriptB64 := base64.StdEncoding.EncodeToString([]byte(iscsiProtectPrimaryRouteScript))
-	ociDNSDiagnosticScriptB64 := base64.StdEncoding.EncodeToString([]byte(ociDNSDiagnosticScript))
 	ociSecondaryNICScriptB64 := base64.StdEncoding.EncodeToString([]byte(oconfig.SecondaryNICScript))
 
 	ignitionConfig := &types.Config{
@@ -283,10 +145,6 @@ func GenerateIgnitionConfig(ctx context.Context, client client.Client) (string, 
 					Contents: swag.String(iscsiProtectServiceUnit),
 				},
 				{
-					Name:     "oci-dns-diagnostic-before-mcd-pull.service",
-					Contents: swag.String(ociDNSDiagnosticBeforeMCDPullServiceUnit),
-				},
-				{
 					Name:     "set-hostname-oci.service",
 					Enabled:  swag.Bool(true),
 					Contents: swag.String(setHostnameOCIServiceUnit),
@@ -295,11 +153,6 @@ func GenerateIgnitionConfig(ctx context.Context, client client.Client) (string, 
 					Name:     "oci-secondary-nic.service",
 					Enabled:  swag.Bool(true),
 					Contents: swag.String(ociSecondaryNICServiceUnit),
-				},
-				{
-					Name:     "oci-boot-marker-multi-user.service",
-					Enabled:  swag.Bool(true),
-					Contents: swag.String(ociBootMarkerMultiUserServiceUnit),
 				},
 			},
 		},
@@ -313,35 +166,8 @@ func GenerateIgnitionConfig(ctx context.Context, client client.Client) (string, 
 						Mode: swag.Int(493),
 					},
 				},
-				{
-					Node: types.Node{
-						Path: "/etc/systemd/system/NetworkManager.service.d",
-					},
-					DirectoryEmbedded1: types.DirectoryEmbedded1{
-						Mode: swag.Int(493),
-					},
-				},
-				{
-					Node: types.Node{
-						Path: "/etc/systemd/system/machine-config-daemon-pull.service.d",
-					},
-					DirectoryEmbedded1: types.DirectoryEmbedded1{
-						Mode: swag.Int(493),
-					},
-				},
 			},
 			Files: []types.File{
-				{
-					Node: types.Node{
-						Path: "/etc/oci-iscsi/oci-boot-marker.sh",
-					},
-					FileEmbedded1: types.FileEmbedded1{
-						Contents: types.Resource{
-							Source: swag.String(fmt.Sprintf("data:text/plain;charset=utf-8;base64,%s", ociBootMarkerScriptB64)),
-						},
-						Mode: swag.Int(493),
-					},
-				},
 				{
 					Node: types.Node{
 						Path: "/etc/oci-iscsi/iscsi-protect-primary-route-watchdog.sh",
@@ -349,17 +175,6 @@ func GenerateIgnitionConfig(ctx context.Context, client client.Client) (string, 
 					FileEmbedded1: types.FileEmbedded1{
 						Contents: types.Resource{
 							Source: swag.String(fmt.Sprintf("data:text/plain;charset=utf-8;base64,%s", iscsiProtectPrimaryRouteScriptB64)),
-						},
-						Mode: swag.Int(493),
-					},
-				},
-				{
-					Node: types.Node{
-						Path: "/etc/oci-iscsi/oci-dns-diagnostic.sh",
-					},
-					FileEmbedded1: types.FileEmbedded1{
-						Contents: types.Resource{
-							Source: swag.String(fmt.Sprintf("data:text/plain;charset=utf-8;base64,%s", ociDNSDiagnosticScriptB64)),
 						},
 						Mode: swag.Int(493),
 					},
@@ -384,28 +199,6 @@ func GenerateIgnitionConfig(ctx context.Context, client client.Client) (string, 
 							Source: swag.String(fmt.Sprintf("data:text/plain;charset=utf-8;base64,%s", ociSecondaryNICScriptB64)),
 						},
 						Mode: swag.Int(493),
-					},
-				},
-				{
-					Node: types.Node{
-						Path: "/etc/systemd/system/NetworkManager.service.d/10-oci-boot-marker.conf",
-					},
-					FileEmbedded1: types.FileEmbedded1{
-						Contents: types.Resource{
-							Source: swag.String(fmt.Sprintf("data:text/plain;charset=utf-8;base64,%s", base64.StdEncoding.EncodeToString([]byte(networkManagerMarkerDropin)))),
-						},
-						Mode: swag.Int(420),
-					},
-				},
-				{
-					Node: types.Node{
-						Path: "/etc/systemd/system/machine-config-daemon-pull.service.d/10-oci-dns-diagnostic.conf",
-					},
-					FileEmbedded1: types.FileEmbedded1{
-						Contents: types.Resource{
-							Source: swag.String(fmt.Sprintf("data:text/plain;charset=utf-8;base64,%s", base64.StdEncoding.EncodeToString([]byte(machineConfigDaemonPullDNSDiagnosticDropin)))),
-						},
-						Mode: swag.Int(420),
 					},
 				},
 			},

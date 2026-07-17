@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -39,6 +39,11 @@ type CertificateApprovalReconciler struct {
 	CSRClient        certificatesv1client.CertificatesV1Client
 	MachineNamespace string
 	ClusterName      string
+}
+
+type certificateApprovalScope struct {
+	namespace   string
+	clusterName string
 }
 
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests,verbs=get;list;watch;update
@@ -94,7 +99,11 @@ func (r *CertificateApprovalReconciler) Reconcile(ctx context.Context, req ctrl.
 	}
 
 	// Check if there's a matching OCIMachine
-	match, machineName := r.hasMatchingOCIMachine(ctx, hostname)
+	match, machineName, err := r.hasMatchingOCIMachine(ctx, hostname)
+	if err != nil {
+		logger.Error(err, "Failed to resolve OCIMachine scope for CSR approval", "csr", csr.Name, "hostname", hostname)
+		return ctrl.Result{}, err
+	}
 	if match {
 		if csr.Spec.SignerName == certificatesv1.KubeletServingSignerName {
 			if err := r.validateServingCSR(ctx, csr, hostname); err != nil {
@@ -150,56 +159,94 @@ func isKubeletServingCSR(csr *certificatesv1.CertificateSigningRequest) bool {
 		containsString(csr.Spec.Groups, systemNodesGroup)
 }
 
-func (r *CertificateApprovalReconciler) hasMatchingOCIMachine(ctx context.Context, hostname string) (bool, string) {
+func (r *CertificateApprovalReconciler) hasMatchingOCIMachine(ctx context.Context, hostname string) (bool, string, error) {
 	logger := log.FromContext(ctx)
-	namespace := strings.TrimSpace(r.MachineNamespace)
-	if namespace == "" {
-		namespace = defaultMachineNamespace
+	scopes, err := r.certificateApprovalScopes(ctx)
+	if err != nil {
+		return false, "", err
 	}
-
-	clusterName := strings.TrimSpace(r.ClusterName)
-	if clusterName == "" {
+	if len(scopes) == 0 {
 		logger.Info("Refusing to match OCIMachine for CSR approval because cluster scope is empty",
 			"hostname", hostname,
-			"namespace", namespace,
 		)
-		return false, ""
+		return false, "", nil
 	}
 
-	// List OCIMachines in the configured namespace and keep the match scoped to
-	// the configured Cluster API cluster.
-	machineList := &metav1.PartialObjectMetadataList{}
-	machineList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "infrastructure.cluster.x-k8s.io",
-		Version: "v1beta2",
-		Kind:    "OCIMachine",
-	})
+	for _, scope := range scopes {
+		machineList := &metav1.PartialObjectMetadataList{}
+		machineList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "infrastructure.cluster.x-k8s.io",
+			Version: "v1beta2",
+			Kind:    "OCIMachine",
+		})
 
-	listOptions := []client.ListOption{
-		client.InNamespace(namespace),
-		client.MatchingLabels{clusterNameLabelKey: clusterName},
-	}
+		err := r.List(ctx, machineList,
+			client.InNamespace(scope.namespace),
+			client.MatchingLabels{clusterNameLabelKey: scope.clusterName},
+		)
+		if err != nil {
+			logger.Error(err, "Failed to list OCIMachines", "namespace", scope.namespace, "clusterName", scope.clusterName)
+			return false, "", err
+		}
 
-	err := r.List(ctx, machineList, listOptions...)
-	if err != nil {
-		logger.Error(err, "Failed to list OCIMachines", "namespace", namespace, "clusterName", clusterName)
-		return false, ""
-	}
-
-	for _, machine := range machineList.Items {
-		if machine.Name == hostname {
-			logger.V(1).Info("Found matching OCIMachine", "hostname", hostname, "machine", machine.Name)
-			return true, machine.Name
+		for _, machine := range machineList.Items {
+			if machine.Name == hostname {
+				logger.V(1).Info("Found matching OCIMachine", "hostname", hostname, "machine", machine.Name, "namespace", scope.namespace, "clusterName", scope.clusterName)
+				return true, machine.Name, nil
+			}
 		}
 	}
 
 	logger.V(1).Info("No matching OCIMachine found",
 		"hostname", hostname,
-		"machineCount", len(machineList.Items),
-		"namespace", namespace,
-		"clusterName", clusterName,
+		"scopeCount", len(scopes),
 	)
-	return false, ""
+	return false, "", nil
+}
+
+func (r *CertificateApprovalReconciler) certificateApprovalScopes(ctx context.Context) ([]certificateApprovalScope, error) {
+	logger := log.FromContext(ctx)
+	baseNamespace := strings.TrimSpace(r.MachineNamespace)
+	if baseNamespace == "" {
+		baseNamespace = defaultMachineNamespace
+	}
+	baseClusterName := strings.TrimSpace(r.ClusterName)
+
+	scopes := make([]certificateApprovalScope, 0, 2)
+	addScope := func(namespace, clusterName string) {
+		namespace = strings.TrimSpace(namespace)
+		clusterName = strings.TrimSpace(clusterName)
+		if namespace == "" || clusterName == "" {
+			return
+		}
+		for _, scope := range scopes {
+			if scope.namespace == namespace && scope.clusterName == clusterName {
+				return
+			}
+		}
+		scopes = append(scopes, certificateApprovalScope{namespace: namespace, clusterName: clusterName})
+	}
+
+	owner, found, err := resolveSingletonOwner(ctx, r.Client, false)
+	if err != nil {
+		logger.Error(err, "Failed to list OCIClusterAutoscalers while resolving CSR approval scope")
+		return nil, err
+	}
+	if found {
+		namespace := baseNamespace
+		if override := strings.TrimSpace(owner.Spec.CAPI.Namespace); override != "" {
+			namespace = override
+		}
+		clusterName := baseClusterName
+		if override := strings.TrimSpace(owner.Spec.CAPI.ClusterName); override != "" {
+			clusterName = override
+		}
+		addScope(namespace, clusterName)
+		return scopes, nil
+	}
+
+	addScope(baseNamespace, baseClusterName)
+	return scopes, nil
 }
 
 func getCSRHostname(csr *certificatesv1.CertificateSigningRequest) (string, error) {

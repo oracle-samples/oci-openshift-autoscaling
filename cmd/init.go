@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/openshift/oci-capi-operator/internal/components/crds"
@@ -18,6 +19,8 @@ import (
 	"github.com/spf13/cobra"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -58,7 +61,7 @@ func runInit(ctx context.Context, setupLog *logr.Logger) error {
 		setupLog.Error(err, "Failed to get config")
 		return err
 	}
-	client, err := client.New(cfg, client.Options{Scheme: scheme})
+	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		setupLog.Error(err, "Failed to create client")
 		return err
@@ -101,22 +104,107 @@ func runInit(ctx context.Context, setupLog *logr.Logger) error {
 
 	// apply all the CRDs
 	createdCount := 0
-	existingCount := 0
+	updatedCount := 0
 	for _, crd := range append(capiCRDs, capociCRDs...) {
 		setupLog.Info("Applying CRD", "name", crd.GetName())
-		err = client.Create(ctx, &crd)
-		if err != nil && !errors.IsAlreadyExists(err) {
+		applied, err := applyProviderCRD(ctx, k8sClient, &crd)
+		if err != nil {
 			setupLog.Error(err, "Failed to apply CRD", "name", crd.GetName())
 			return err
 		}
-		if errors.IsAlreadyExists(err) {
-			existingCount++
-			setupLog.Info("CRD already exists", "name", crd.GetName())
-			continue
+		switch applied {
+		case "created":
+			createdCount++
+			setupLog.Info("Created CRD", "name", crd.GetName())
+		case "updated":
+			updatedCount++
+			setupLog.Info("Updated CRD", "name", crd.GetName())
 		}
-		createdCount++
-		setupLog.Info("Created CRD", "name", crd.GetName())
 	}
-	setupLog.Info("All CRDs applied successfully", "created", createdCount, "alreadyExists", existingCount)
+	setupLog.Info("All CRDs applied successfully", "created", createdCount, "updated", updatedCount)
 	return nil
+}
+
+func applyProviderCRD(ctx context.Context, k8sClient client.Client, desired client.Object) (string, error) {
+	if desired == nil {
+		return "", fmt.Errorf("desired CRD is nil")
+	}
+	created := desired.DeepCopyObject()
+	createdObject, ok := created.(client.Object)
+	if !ok {
+		return "", fmt.Errorf("desired CRD %T is not a client object", desired)
+	}
+	if err := k8sClient.Create(ctx, createdObject); err == nil {
+		return "created", nil
+	} else if !errors.IsAlreadyExists(err) {
+		return "", err
+	}
+
+	existingObject := &unstructured.Unstructured{}
+	existingObject.SetAPIVersion(desired.GetObjectKind().GroupVersionKind().GroupVersion().String())
+	existingObject.SetKind(desired.GetObjectKind().GroupVersionKind().Kind)
+	if existingObject.GetAPIVersion() == "" || existingObject.GetKind() == "" {
+		existingObject.SetAPIVersion("apiextensions.k8s.io/v1")
+		existingObject.SetKind("CustomResourceDefinition")
+	}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: desired.GetName()}, existingObject); err != nil {
+		return "", err
+	}
+
+	updatedObject := existingObject.DeepCopy()
+	updatedObject.SetLabels(mergeStringMaps(existingObject.GetLabels(), desired.GetLabels()))
+	updatedObject.SetAnnotations(mergeStringMaps(existingObject.GetAnnotations(), desired.GetAnnotations()))
+	if err := copyMutableCRDSpecFields(updatedObject, desired); err != nil {
+		return "", err
+	}
+	if err := k8sClient.Patch(ctx, updatedObject, client.MergeFrom(existingObject)); err != nil {
+		return "", err
+	}
+	return "updated", nil
+}
+
+func copyMutableCRDSpecFields(target *unstructured.Unstructured, source client.Object) error {
+	sourceObject, ok := source.(*unstructured.Unstructured)
+	if !ok {
+		return fmt.Errorf("desired CRD %T is not an unstructured object", source)
+	}
+	for _, path := range [][]string{
+		{"spec", "versions"},
+		{"spec", "conversion"},
+		{"spec", "preserveUnknownFields"},
+	} {
+		if err := copyNestedField(target, sourceObject, path...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyNestedField(target, source *unstructured.Unstructured, path ...string) error {
+	value, found, err := unstructured.NestedFieldNoCopy(source.Object, path...)
+	if err != nil {
+		return fmt.Errorf("failed to read desired CRD field %v: %w", path, err)
+	}
+	if !found {
+		unstructured.RemoveNestedField(target.Object, path...)
+		return nil
+	}
+	if err := unstructured.SetNestedField(target.Object, apiruntime.DeepCopyJSONValue(value), path...); err != nil {
+		return fmt.Errorf("failed to set CRD field %v: %w", path, err)
+	}
+	return nil
+}
+
+func mergeStringMaps(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(base)+len(override))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range override {
+		merged[key] = value
+	}
+	return merged
 }

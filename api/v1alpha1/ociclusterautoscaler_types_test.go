@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -8,11 +8,13 @@ package v1alpha1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -83,8 +85,8 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 					Namespace:            "openshift-machine-api",
 					ServiceAccountName:   "cluster-autoscaler",
 					CloudProvider:        "oci",
-					CreateRBAC:           true,
-					CreateServiceAccount: true,
+					CreateRBAC:           ptr.To(true),
+					CreateServiceAccount: ptr.To(true),
 					Version:              "1.0.0",
 				},
 			},
@@ -155,6 +157,77 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 		Expect(err.Error()).To(ContainSubstring("spec.autoscaling.minNodes"))
 	})
 
+	It("should validate maximum node count", func() {
+		autoscaler := &OCIClusterAutoscaler{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-autoscaler-negative-max",
+				Namespace: namespace,
+			},
+			Spec: OCIClusterAutoscalerSpec{
+				Autoscaling: AutoscalingConfig{
+					MinNodes: ptr.To[int32](0),
+					MaxNodes: ptr.To[int32](-1),
+				},
+			},
+		}
+
+		err := k8sClient.Create(ctx, autoscaler)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("spec.autoscaling.maxNodes"))
+	})
+
+	It("should validate flexible shape CPU and memory", func() {
+		invalidCPU := &unstructured.Unstructured{
+			Object: map[string]any{
+				"apiVersion": GroupVersion.String(),
+				"kind":       "OCIClusterAutoscaler",
+				"metadata": map[string]any{
+					"name":      "test-autoscaler-zero-cpu",
+					"namespace": namespace,
+				},
+				"spec": map[string]any{
+					"autoscaling": map[string]any{
+						"minNodes": int64(0),
+						"maxNodes": int64(1),
+						"shapeConfig": map[string]any{
+							"cpus":   int64(0),
+							"memory": int64(16),
+						},
+					},
+				},
+			},
+		}
+
+		err := k8sClient.Create(ctx, invalidCPU)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("spec.autoscaling.shapeConfig.cpus"))
+
+		invalidMemory := &unstructured.Unstructured{
+			Object: map[string]any{
+				"apiVersion": GroupVersion.String(),
+				"kind":       "OCIClusterAutoscaler",
+				"metadata": map[string]any{
+					"name":      "test-autoscaler-zero-memory",
+					"namespace": namespace,
+				},
+				"spec": map[string]any{
+					"autoscaling": map[string]any{
+						"minNodes": int64(0),
+						"maxNodes": int64(1),
+						"shapeConfig": map[string]any{
+							"cpus":   int64(2),
+							"memory": int64(0),
+						},
+					},
+				},
+			},
+		}
+
+		err = k8sClient.Create(ctx, invalidMemory)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("spec.autoscaling.shapeConfig.memory"))
+	})
+
 	It("should validate autoscaler pool identifier format", func() {
 		autoscaler := &OCIClusterAutoscaler{
 			ObjectMeta: metav1.ObjectMeta{
@@ -195,29 +268,7 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 		Expect(err.Error()).To(ContainSubstring("spec.autoscaling.poolIdentifier"))
 	})
 
-	It("should validate generated autoscaling resource name length without pool identifier", func() {
-		autoscaler := &OCIClusterAutoscaler{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-autoscaler",
-				Namespace: namespace,
-			},
-			Spec: OCIClusterAutoscalerSpec{
-				Autoscaling: AutoscalingConfig{
-					MinNodes: ptr.To[int32](1),
-					MaxNodes: ptr.To[int32](10),
-				},
-				CAPI: CAPIConfig{
-					ClusterName: strings.Repeat("a", 52),
-				},
-			},
-		}
-
-		err := k8sClient.Create(ctx, autoscaler)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("spec.capi.clusterName"))
-	})
-
-	It("should validate generated autoscaling resource name length with pool identifier", func() {
+	It("should validate generated node pool name maximum length", func() {
 		autoscaler := &OCIClusterAutoscaler{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-autoscaler",
@@ -237,31 +288,128 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 
 		err := k8sClient.Create(ctx, autoscaler)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("generated autoscaling resource names longer than 63 characters"))
+		Expect(err.Error()).To(ContainSubstring("node pool name"))
 	})
 
-	It("should reject updates to autoscaler pool identifier", func() {
-		autoscaler := &OCIClusterAutoscaler{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-autoscaler",
-				Namespace: namespace,
+	It("should validate Kubernetes object name fields", func() {
+		tests := []struct {
+			name      string
+			fieldPath string
+			mutate    func(*OCIClusterAutoscaler)
+		}{
+			{
+				name:      "capi-cluster-name",
+				fieldPath: "spec.capi.clusterName",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.CAPI.ClusterName = "Invalid_Name"
+				},
 			},
-			Spec: OCIClusterAutoscalerSpec{
-				Autoscaling: AutoscalingConfig{
-					MinNodes:       ptr.To[int32](1),
-					MaxNodes:       ptr.To[int32](10),
-					PoolIdentifier: "bm01",
+			{
+				name:      "cluster-autoscaler-name",
+				fieldPath: "spec.clusterAutoscaler.name",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.ClusterAutoscaler.Name = "Invalid_Name"
+				},
+			},
+			{
+				name:      "cluster-autoscaler-service-account",
+				fieldPath: "spec.clusterAutoscaler.serviceAccountName",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.ClusterAutoscaler.ServiceAccountName = "Invalid_Name"
 				},
 			},
 		}
 
-		err := k8sClient.Create(ctx, autoscaler)
-		Expect(err).NotTo(HaveOccurred())
+		for _, tt := range tests {
+			autoscaler := &OCIClusterAutoscaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("invalid-%s", tt.name),
+					Namespace: namespace,
+				},
+				Spec: OCIClusterAutoscalerSpec{
+					Autoscaling: AutoscalingConfig{
+						MinNodes: ptr.To[int32](0),
+						MaxNodes: ptr.To[int32](1),
+					},
+				},
+			}
+			tt.mutate(autoscaler)
 
-		autoscaler.Spec.Autoscaling.PoolIdentifier = "bm02"
-		err = k8sClient.Update(ctx, autoscaler)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("poolIdentifier is immutable"))
+			err := k8sClient.Create(ctx, autoscaler)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(tt.fieldPath))
+		}
+	})
+
+	It("should reject identity field updates", func() {
+		tests := []struct {
+			name   string
+			mutate func(*OCIClusterAutoscaler)
+		}{
+			{
+				name: "pool-identifier",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.Autoscaling.PoolIdentifier = "bm02"
+				},
+			},
+			{
+				name: "capi-namespace",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.CAPI.Namespace = "managed-b"
+				},
+			},
+			{
+				name: "capi-cluster-name",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.CAPI.ClusterName = "cluster-b"
+				},
+			},
+			{
+				name: "autoscaler-name",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.ClusterAutoscaler.Name = "autoscaler-b"
+				},
+			},
+			{
+				name: "autoscaler-namespace",
+				mutate: func(autoscaler *OCIClusterAutoscaler) {
+					autoscaler.Spec.ClusterAutoscaler.Namespace = "autoscaler-b"
+				},
+			},
+		}
+
+		for _, tt := range tests {
+			autoscaler := &OCIClusterAutoscaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("immutable-%s", tt.name),
+					Namespace: namespace,
+				},
+				Spec: OCIClusterAutoscalerSpec{
+					Autoscaling: AutoscalingConfig{
+						MinNodes:       ptr.To[int32](0),
+						MaxNodes:       ptr.To[int32](1),
+						PoolIdentifier: "bm01",
+					},
+					CAPI: CAPIConfig{
+						Namespace:   "managed-a",
+						ClusterName: "cluster-a",
+					},
+					ClusterAutoscaler: ClusterAutoscalerConfig{
+						Name:      "autoscaler-a",
+						Namespace: "autoscaler-a",
+					},
+				},
+			}
+
+			Expect(k8sClient.Create(ctx, autoscaler)).To(Succeed())
+			stored := &OCIClusterAutoscaler{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: autoscaler.Name, Namespace: autoscaler.Namespace}, stored)).To(Succeed())
+			tt.mutate(stored)
+
+			err := k8sClient.Update(ctx, stored)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("immutable"))
+		}
 	})
 
 	It("should handle nil ShapeConfig", func() {

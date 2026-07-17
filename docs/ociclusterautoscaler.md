@@ -1,84 +1,36 @@
 <!--
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 -->
 
-# OCIClusterAutoscaler CR
+# OCIClusterAutoscaler API
 
-The OCIClusterAutoscaler CR has spec fields that can modify the default values used by this operator in deploying/enabling autoscaling.
-The fields are not required on creation. The spec fields will take precedence over the default values if set.
+This document is an API reference only. Installation, verification, scale testing, cleanup, and troubleshooting are owned by the `oracle-quickstart/oci-openshift` Terraform stack documentation:
+https://github.com/oracle-quickstart/oci-openshift/blob/main/docs/AUTOSCALER.md
 
-## Spec fields
+Do not use this repository's `config/` manifests as the production deployment workflow.
 
-The OCIClusterAutoscaler spec contains three main sections:
+## Autoscaling
 
-### Autoscaling Configuration
-Required field that configures the autoscaling behavior:
+- `spec.autoscaling.minNodes`: minimum node count. Must be `>= 0`.
+- `spec.autoscaling.maxNodes`: maximum node count. Must be `>= 0`.
+- `spec.autoscaling.shape`: OCI compute shape for autoscaling nodes.
+- `spec.autoscaling.shapeConfig`: optional flexible shape configuration. When set, `cpus` and `memory` must both be greater than `0`.
+- `spec.autoscaling.imageId`: custom RHCOS image OCID used by autoscaling workers.
+- `spec.autoscaling.poolIdentifier`: optional lowercase suffix for autoscaler node pool resources. Maximum length is 5 characters. The generated node pool name must stay within 51 characters. Immutable after creation.
 
-- `autoscaling`: Configuration for the autoscaling group
-  - `minNodes`: Minimum number of nodes in the autoscaling group (minimum: 0)
-  - `maxNodes`: Maximum number of nodes in the autoscaling group
-  - `shape`: OCI compute shape for autoscaling nodes
-  - `poolIdentifier`: Optional lowercase identifier appended to autoscaler node pool resource names, up to 5 characters. This field is immutable after creation.
-  - `shapeConfig`: Optional flexible shape configuration
-    - `cpus`: Number of OCPUs
-    - `memory`: Amount of memory in GB
-  - `imageId`: OCID of the custom RHCOS image for deploying new nodes during autoscaling
+## CAPI
 
-### CAPI Configuration
-Optional configuration for Cluster API resources:
+- `spec.capi.namespace`: optional namespace override for generated CAPI resources. Immutable after creation.
+- `spec.capi.clusterName`: optional CAPI cluster name override. Must be a valid Kubernetes object name. If set, it must fit the 51-character generated node pool name limit together with `spec.autoscaling.poolIdentifier`. Immutable after creation.
 
-- `capi`: CAPI deployment configuration
-  - `namespace`: Namespace where CAPI resources will be created
-  - `clusterName`: Name of the CAPI cluster
+## Cluster Autoscaler
 
-### Cluster Autoscaler Configuration
-Optional configuration for the cluster-autoscaler deployment:
-
-- `clusterAutoscaler`: Cluster autoscaler deployment configuration
-  - `repositoryURL`: URL for the helm chart of the cluster-autoscaler
-  - `name`: Name of the cluster-autoscaler deployment
-  - `namespace`: Namespace where the cluster-autoscaler deployment will be installed
-  - `serviceAccountName`: Name of the service account the cluster-autoscaler deployment will use
-  - `cloudProvider`: Cloud provider to use for the helm chart
-  - `createRBAC`: Whether to create the RBAC resources from the helm chart (boolean)
-  - `createServiceAccount`: Whether to create the service account from the helm chart (boolean)
-  - `version`: Helm chart version of the cluster-autoscaler to install
-
-Example:
-```yaml
-apiVersion: capi.oci.oracle.com/v1alpha1
-kind: OCIClusterAutoscaler
-metadata:
-  name: example-autoscaler
-spec:
-  autoscaling:
-    minNodes: 1
-    maxNodes: 5
-    shape: "VM.Standard.E4.Flex"
-    poolIdentifier: "vm01"
-    shapeConfig:
-      cpus: 2
-      memory: 16
-    imageId: "ocid1.image.oc1.example..."
-  capi:
-    namespace: "oci-openshift-autoscaling-operator"
-    clusterName: "example-cluster"
-  clusterAutoscaler:
-    name: "cluster-autoscaler"
-    namespace: "kube-system"
-    version: "9.29.0"
-    createRBAC: true
-    createServiceAccount: true
-```
-
-## Update min/max nodes
-
-Change the autoscaling bounds by patching the existing `OCIClusterAutoscaler` CR. For example, scale the autoscaling group down to zero:
-
-```sh
-oc patch ociclusterautoscaler.capi.openshift.io -n oci-openshift-autoscaling-operator ociclusterautoscaler \
-  --type=merge \
-  -p '{"spec":{"autoscaling":{"minNodes":0,"maxNodes":0}}}'
-oc get machinedeployment.cluster.x-k8s.io -n oci-openshift-autoscaling-operator
-```
+- `spec.clusterAutoscaler.repositoryURL`: Helm chart repository URL.
+- `spec.clusterAutoscaler.name`: cluster-autoscaler Deployment name. Must be a valid Kubernetes object name. Immutable after creation.
+- `spec.clusterAutoscaler.namespace`: optional cluster-autoscaler install namespace override. Immutable after creation.
+- `spec.clusterAutoscaler.serviceAccountName`: service account name used by cluster-autoscaler. Must be a valid Kubernetes object name.
+- `spec.clusterAutoscaler.cloudProvider`: Helm chart cloud provider value.
+- `spec.clusterAutoscaler.createRBAC`: whether Helm should create RBAC resources.
+- `spec.clusterAutoscaler.createServiceAccount`: whether Helm should create the service account.
+- `spec.clusterAutoscaler.version`: Helm chart version.

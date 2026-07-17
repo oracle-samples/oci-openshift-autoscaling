@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -96,19 +97,21 @@ type Options struct {
 	ProviderConfig    controllers.ProviderConfig
 	AutoScalingConfig enableautoscaler.Config
 	CAPOCIProvider    controllers.ProviderConfig
+	NamespaceConfig   controllers.NamespaceConfig
 	CSRApprovalConfig CSRApprovalConfig
 	RunOptions        RunOptions
 }
 
 type CSRApprovalConfig struct {
-	MachineNamespace string `envconfig:"CSR_MACHINE_NAMESPACE" default:"oci-openshift-autoscaling-operator"`
+	MachineNamespace string `envconfig:"CSR_MACHINE_NAMESPACE" default:""`
 	ClusterName      string `envconfig:"CSR_CLUSTER_NAME" default:""`
 }
 
-const defaultCSRMachineNamespace = "oci-openshift-autoscaling-operator"
+const defaultCSRMachineNamespace = controllers.DefaultManagedResourceNamespace
 
 type RunOptions struct {
 	EnableLeaderElection bool
+	MetricsAddr          string
 	ProbeAddr            string
 	EnableHTTP2          bool
 }
@@ -138,6 +141,7 @@ func run(ctx context.Context, options Options, setupLog *logr.Logger) error {
 	mgrOpts := ctrl.Options{
 		Scheme:                 scheme,
 		WebhookServer:          webhookServer,
+		Metrics:                metricsserver.Options{BindAddress: options.RunOptions.MetricsAddr},
 		HealthProbeBindAddress: options.RunOptions.ProbeAddr,
 		LeaderElection:         options.RunOptions.EnableLeaderElection,
 		LeaderElectionID:       "1af242a3.openshift.io",
@@ -153,7 +157,8 @@ func run(ctx context.Context, options Options, setupLog *logr.Logger) error {
 		setupLog.Error(err, "failed to process environment variables")
 		os.Exit(1)
 	}
-	if err := resolveCSRApprovalConfig(ctx, mgr.GetAPIReader(), &options.CSRApprovalConfig); err != nil {
+	options.NamespaceConfig = options.NamespaceConfig.WithDefaults()
+	if err := resolveCSRApprovalConfig(ctx, mgr.GetAPIReader(), &options.CSRApprovalConfig, options.NamespaceConfig.ManagedResourceNamespace); err != nil {
 		setupLog.Error(err, "invalid CSR approval configuration")
 		return err
 	}
@@ -177,6 +182,12 @@ func run(ctx context.Context, options Options, setupLog *logr.Logger) error {
 		"capociProviderVersion", options.CAPOCIProvider.Version,
 		"capociAuthMode", capociAuthMode(options.CAPOCICredentials),
 		"ociRegion", options.CAPOCICredentials.Region,
+		"operatorNamespace", options.NamespaceConfig.OperatorNamespace,
+		"capiProviderNamespace", options.NamespaceConfig.CAPIProviderNamespace,
+		"capociProviderNamespace", options.NamespaceConfig.CAPOCIProviderNamespace,
+		"managedResourceNamespace", options.NamespaceConfig.ManagedResourceNamespace,
+		"autoscalerNamespace", options.NamespaceConfig.AutoscalerNamespace,
+		"autoscalerDiscoveryNamespace", options.NamespaceConfig.AutoscalerDiscoveryNamespace,
 		"csrMachineNamespace", options.CSRApprovalConfig.MachineNamespace,
 		"csrClusterName", options.CSRApprovalConfig.ClusterName,
 	)
@@ -188,6 +199,8 @@ func run(ctx context.Context, options Options, setupLog *logr.Logger) error {
 		ProviderConfig:    options.ProviderConfig,
 		CAPOCIProvider:    options.CAPOCIProvider,
 		AutoScalingConfig: options.AutoScalingConfig,
+		NamespaceConfig:   options.NamespaceConfig,
+		EventRecorder:     mgr.GetEventRecorderFor("ociclusterautoscaler-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "OCIClusterAutoscaler")
 		return err
@@ -234,14 +247,20 @@ func validateOptions(options Options) error {
 	if err := options.CAPOCICredentials.Validate(); err != nil {
 		return err
 	}
+	if err := options.NamespaceConfig.Validate(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(options.CSRApprovalConfig.ClusterName) == "" {
 		return fmt.Errorf("CSR approval requires CSR_CLUSTER_NAME or CLUSTER_NAME")
 	}
 	return nil
 }
 
-func resolveCSRApprovalConfig(ctx context.Context, c client.Reader, config *CSRApprovalConfig) error {
+func resolveCSRApprovalConfig(ctx context.Context, c client.Reader, config *CSRApprovalConfig, defaultMachineNamespace string) error {
 	config.MachineNamespace = strings.TrimSpace(config.MachineNamespace)
+	if config.MachineNamespace == "" {
+		config.MachineNamespace = strings.TrimSpace(defaultMachineNamespace)
+	}
 	if config.MachineNamespace == "" {
 		config.MachineNamespace = defaultCSRMachineNamespace
 	}
@@ -278,6 +297,7 @@ func NewRunCommand() *cobra.Command {
 	}
 
 	options := Options{}
+	runCmd.Flags().StringVar(&options.RunOptions.MetricsAddr, "metrics-bind-address", ":8080", "The address the metrics endpoint binds to.")
 	runCmd.Flags().StringVar(&options.RunOptions.ProbeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	runCmd.Flags().BoolVar(&options.RunOptions.EnableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+

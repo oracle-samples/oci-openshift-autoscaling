@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -10,25 +10,26 @@ import (
 	. "github.com/onsi/gomega"
 	capiv1alpha1 "github.com/openshift/oci-capi-operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 )
 
 type AutoscalerValues struct {
-	CloudProvider    string `yaml:"cloudProvider"`
-	FullnameOverride string `yaml:"fullnameOverride"`
+	CloudProvider    string `json:"cloudProvider"`
+	FullnameOverride string `json:"fullnameOverride"`
 	AutoDiscovery    struct {
-		Namespace string `yaml:"namespace"`
-	} `yaml:"autoDiscovery"`
+		Namespace string `json:"namespace"`
+	} `json:"autoDiscovery"`
 	ExtraArgs struct {
-		ScanInterval string `json:"scan-interval" yaml:"scan-interval"`
-	} `yaml:"extraArgs"`
+		ScanInterval string `json:"scan-interval"`
+	} `json:"extraArgs"`
 	RBAC struct {
-		Create         bool `yaml:"create"`
+		Create         bool `json:"create"`
 		ServiceAccount struct {
-			Create bool   `yaml:"create"`
-			Name   string `yaml:"name"`
-		} `yaml:"serviceAccount"`
-	} `yaml:"rbac"`
+			Create bool   `json:"create"`
+			Name   string `json:"name"`
+		} `json:"serviceAccount"`
+	} `json:"rbac"`
 }
 
 var _ = Describe("Autoscaler Values", func() {
@@ -38,15 +39,16 @@ var _ = Describe("Autoscaler Values", func() {
 
 	BeforeEach(func() {
 		defaultValues = AutoscalerDeploymentValues{
-			CloudProvider:        "oci",
-			Name:                 "cluster-autoscaler",
-			Namespace:            "kube-system",
-			ServiceAccountName:   "cluster-autoscaler",
-			CreateRBAC:           false,
-			CreateServiceAccount: false,
-			RepositoryURL:        "https://kubernetes.github.io/autoscaler",
-			Chart:                "cluster-autoscaler",
-			Version:              "1.0.0",
+			CloudProvider:          "oci",
+			Name:                   "cluster-autoscaler",
+			Namespace:              "autoscaler-system",
+			AutoDiscoveryNamespace: "managed-capi-system",
+			ServiceAccountName:     "cluster-autoscaler",
+			CreateRBAC:             false,
+			CreateServiceAccount:   false,
+			RepositoryURL:          "https://kubernetes.github.io/autoscaler",
+			Chart:                  "cluster-autoscaler",
+			Version:                "1.0.0",
 		}
 	})
 
@@ -62,7 +64,7 @@ var _ = Describe("Autoscaler Values", func() {
 			// Verify the parsed values match what we expect
 			Expect(values.CloudProvider).To(Equal("oci"))
 			Expect(values.FullnameOverride).To(Equal("cluster-autoscaler"))
-			Expect(values.AutoDiscovery.Namespace).To(Equal("kube-system"))
+			Expect(values.AutoDiscovery.Namespace).To(Equal("managed-capi-system"))
 			Expect(values.ExtraArgs.ScanInterval).To(Equal("60s"))
 			Expect(values.RBAC.Create).To(BeFalse())
 			Expect(values.RBAC.ServiceAccount.Create).To(BeFalse())
@@ -104,6 +106,16 @@ var _ = Describe("Autoscaler Values", func() {
 			Expect(values.RBAC.Create).To(BeTrue())
 			Expect(values.RBAC.ServiceAccount.Create).To(BeTrue())
 		})
+
+		It("should fall back to the install namespace when discovery namespace is empty", func() {
+			defaultValues.AutoDiscoveryNamespace = ""
+			valuesStr := GetValuesString(&defaultValues)
+
+			var values AutoscalerValues
+			err := yaml.Unmarshal([]byte(valuesStr), &values)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.AutoDiscovery.Namespace).To(Equal("autoscaler-system"))
+		})
 	})
 
 	Context("GetAutoscalerDeploymentValues", func() {
@@ -132,8 +144,8 @@ var _ = Describe("Autoscaler Values", func() {
 						Name:                 "custom-autoscaler",
 						Namespace:            "custom-namespace",
 						ServiceAccountName:   "custom-sa",
-						CreateRBAC:           true,
-						CreateServiceAccount: true,
+						CreateRBAC:           ptr.To(true),
+						CreateServiceAccount: ptr.To(true),
 						RepositoryURL:        "https://custom.repo",
 						Version:              "2.0.0",
 					},
@@ -195,6 +207,26 @@ var _ = Describe("Autoscaler Values", func() {
 			var parsedValues AutoscalerValues
 			err := yaml.Unmarshal([]byte(valuesStr), &parsedValues)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should allow explicit false RBAC and service account overrides", func() {
+			defaultValues.CreateRBAC = true
+			defaultValues.CreateServiceAccount = true
+			instance := &capiv1alpha1.OCIClusterAutoscaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-autoscaler",
+				},
+				Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
+					ClusterAutoscaler: capiv1alpha1.ClusterAutoscalerConfig{
+						CreateRBAC:           ptr.To(false),
+						CreateServiceAccount: ptr.To(false),
+					},
+				},
+			}
+
+			values := GetAutoscalerDeploymentValues(defaultValues, instance)
+			Expect(values.CreateRBAC).To(BeFalse())
+			Expect(values.CreateServiceAccount).To(BeFalse())
 		})
 	})
 })

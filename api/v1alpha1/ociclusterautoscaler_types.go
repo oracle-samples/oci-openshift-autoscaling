@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -7,8 +7,23 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+const (
+	// ConditionReady reports whether the autoscaler stack is ready for normal operation.
+	ConditionReady = "Ready"
+	// ConditionPolicyAccepted reports whether the requested autoscaler policy is accepted.
+	ConditionPolicyAccepted = "PolicyAccepted"
+	// ConditionProvidersReady reports whether CAPI and CAPOCI provider dependencies are ready.
+	ConditionProvidersReady = "ProvidersReady"
+	// ConditionAutoscalerReady reports whether the cluster-autoscaler deployment is ready.
+	ConditionAutoscalerReady = "AutoscalerReady"
+	// ConditionScalingResourcesReady reports whether managed scaling resources are reconciled.
+	ConditionScalingResourcesReady = "ScalingResourcesReady"
+	// ConditionCleanupSucceeded reports the latest cleanup result during deletion.
+	ConditionCleanupSucceeded = "CleanupSucceeded"
+)
+
 // OCIClusterAutoscalerSpec defines the desired state of OCIClusterAutoscaler
-// +kubebuilder:validation:XValidation:rule="!has(self.capi) || !has(self.capi.clusterName) || self.capi.clusterName == ” || !has(self.autoscaling) || ((!has(self.autoscaling.poolIdentifier) || self.autoscaling.poolIdentifier == ”) && size(self.capi.clusterName) <= 51) || (has(self.autoscaling.poolIdentifier) && self.autoscaling.poolIdentifier != ” && size(self.capi.clusterName) + size(self.autoscaling.poolIdentifier) <= 50)",message="spec.capi.clusterName and spec.autoscaling.poolIdentifier produce generated autoscaling resource names longer than 63 characters"
+// +kubebuilder:validation:XValidation:rule="!has(self.capi) || !has(self.capi.clusterName) || size(self.capi.clusterName) == 0 || ((!has(self.autoscaling.poolIdentifier) || size(self.autoscaling.poolIdentifier) == 0) ? size(self.capi.clusterName) <= 51 : size(self.capi.clusterName) + size(self.autoscaling.poolIdentifier) + 1 <= 51)",message="spec.capi.clusterName and spec.autoscaling.poolIdentifier must produce a node pool name no longer than 51 characters"
 type OCIClusterAutoscalerSpec struct {
 	// Autoscaling configuration
 	Autoscaling AutoscalingConfig `json:"autoscaling"`
@@ -21,13 +36,13 @@ type OCIClusterAutoscalerSpec struct {
 }
 
 // AutoscalingConfig contains optional autoscaling configuration
-// +kubebuilder:validation:XValidation:rule="has(self.poolIdentifier) == has(oldSelf.poolIdentifier) && (!has(self.poolIdentifier) || self.poolIdentifier == oldSelf.poolIdentifier)",message="poolIdentifier is immutable"
 type AutoscalingConfig struct {
 	// minNodes is the minimum number of nodes in the autoscaling group
 	// +kubebuilder:validation:Minimum=0
 	MinNodes *int32 `json:"minNodes,omitempty"`
 
 	// maxNodes is the maximum number of nodes in the autoscaling group
+	// +kubebuilder:validation:Minimum=0
 	MaxNodes *int32 `json:"maxNodes,omitempty"`
 
 	// nodeShape is the OCI compute shape for autoscaling nodes
@@ -41,28 +56,35 @@ type AutoscalingConfig struct {
 
 	// PoolIdentifier is an optional lowercase identifier appended to the CAPI cluster name
 	// when naming autoscaler node pool resources.
-	// It is immutable because it is part of generated CAPI resource names and OCI tags.
 	// +kubebuilder:validation:MaxLength=5
 	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="poolIdentifier is immutable"
 	PoolIdentifier string `json:"poolIdentifier,omitempty"`
 }
 
 // ShapeConfig contains OCI flexible shape configuration
 type ShapeConfig struct {
 	// CPUs is the number of OCPUs
+	// +kubebuilder:validation:Minimum=1
 	CPUs int32 `json:"cpus,omitempty"`
 
 	// Memory is the amount of memory in GB
+	// +kubebuilder:validation:Minimum=1
 	Memory int32 `json:"memory,omitempty"`
 }
 
 // CAPIConfig contains Cluster API configuration
 type CAPIConfig struct {
 	// Namespace where CAPI resources will be created
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="namespace is immutable"
 	Namespace string `json:"namespace,omitempty"`
 
 	// ClusterName is the name of the CAPI cluster
-	// +kubebuilder:validation:MaxLength=51
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="clusterName is immutable"
 	ClusterName string `json:"clusterName,omitempty"`
 }
 
@@ -72,12 +94,20 @@ type ClusterAutoscalerConfig struct {
 	RepositoryURL string `json:"repositoryURL,omitempty"`
 
 	// Name is the name of the cluster-autoscaler deployment
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="name is immutable"
 	Name string `json:"name,omitempty"`
 
 	// Namespace is the namespace where the cluster-autoscaler deployment will be installed
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="namespace is immutable"
 	Namespace string `json:"namespace,omitempty"`
 
 	// ServiceAccountName is the name of the service account the cluster-autoscaler deployment will use
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 
 	// CloudProvider is the cloud provider to use for the helm chart
@@ -85,11 +115,11 @@ type ClusterAutoscalerConfig struct {
 
 	// CreateRBAC is whether or not to create the RBAC resources from the helm chart
 	// for the cluster-autoscaler
-	CreateRBAC bool `json:"createRBAC,omitempty"`
+	CreateRBAC *bool `json:"createRBAC,omitempty"`
 
 	// CreateServiceAccount is whether or not to create the service account
 	// from the helm chart for the cluster-autoscaler
-	CreateServiceAccount bool `json:"createServiceAccount,omitempty"`
+	CreateServiceAccount *bool `json:"createServiceAccount,omitempty"`
 
 	// Version is the helm chart version of the cluster-autoscaler to install
 	Version string `json:"version,omitempty"`
@@ -97,7 +127,12 @@ type ClusterAutoscalerConfig struct {
 
 // OCIClusterAutoscalerStatus defines the observed state of OCIClusterAutoscaler
 type OCIClusterAutoscalerStatus struct {
-	// Conditions represent the latest available observations of the autoscaler's current state
+	// Conditions represent the latest available observations of the autoscaler's current state.
+	// Ready reflects the steady-state install/runtime path; CleanupSucceeded reports cleanup separately.
+	// Stable condition types are Ready, PolicyAccepted, ProvidersReady, AutoscalerReady,
+	// ScalingResourcesReady, and CleanupSucceeded.
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// Phase represents the current phase of the autoscaler

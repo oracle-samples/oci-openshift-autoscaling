@@ -1,0 +1,124 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "capi.openshift.io/v1alpha1",
+          "kind": "OCIClusterAutoscaler",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/created-by": "oci-capi-autoscaling-operator",
+              "app.kubernetes.io/instance": "ociclusterautoscaler",
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "ociclusterautoscaler",
+              "app.kubernetes.io/part-of": "oci-capi-autoscaling-operator"
+            },
+            "name": "ociclusterautoscaler"
+          },
+          "spec": {
+            "autoscaling": {
+              "imageId": "ocid1.image.oc1.example.uniqueid",
+              "maxNodes": 4,
+              "minNodes": 0,
+              "poolIdentifier": "vm01",
+              "shape": "VM.Standard.E5.Flex",
+              "shapeConfig": {
+                "cpus": 4,
+                "memory": 16
+              }
+            },
+            "capi": {
+              "clusterName": "sample-cluster",
+              "namespace": "capi-system"
+            },
+            "clusterAutoscaler": {
+              "cloudProvider": "clusterapi",
+              "createRBAC": true,
+              "createServiceAccount": true,
+              "name": "oci-cluster-autoscaler",
+              "namespace": "capi-system",
+              "repositoryURL": "https://kubernetes.github.io/autoscaler",
+              "serviceAccountName": "oci-cluster-autoscaler"
+            }
+          }
+        }
+      ]
+    capabilities: Basic Install
+    categories: Cloud Provider
+    com.redhat.openshift.versions: v4.22
+    containerImage: ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling:latest
+    createdAt: "2026-07-17T00:00:00Z"
+    description: Manages Cluster API based autoscaling for OpenShift clusters running
+      on Oracle Cloud Infrastructure.
+    features.operators.openshift.io/disconnected: "false"
+    features.operators.openshift.io/fips-compliant: "false"
+    features.operators.openshift.io/proxy-aware: "false"
+    features.operators.openshift.io/tls-profiles: "false"
+    features.operators.openshift.io/token-auth-aws: "false"
+    features.operators.openshift.io/token-auth-azure: "false"
+    features.operators.openshift.io/token-auth-gcp: "false"
+    operators.openshift.io/valid-subscription: Oracle support subscription required.
+    operators.operatorframework.io/builder: operator-sdk-v1.42.2
+    operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+    support: Oracle
+  labels:
+    operatorframework.io/arch.amd64: supported
+    operatorframework.io/arch.arm64: supported
+  name: oci-capi-autoscaling-operator.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: |-
+        OCIClusterAutoscaler is the Schema for the ociclusterautoscalers API.
+        The controller manages singleton cluster-scoped resources, so only one
+        OCIClusterAutoscaler may actively reconcile in a cluster.
+      displayName: OCICluster Autoscaler
+      kind: OCIClusterAutoscaler
+      name: ociclusterautoscalers.capi.openshift.io
+      version: v1alpha1
+  description: |-
+    The OCI CAPI Autoscaling Operator manages Cluster API based worker node
+    autoscaling for OpenShift clusters running on Oracle Cloud Infrastructure.
+    It reconciles the OCIClusterAutoscaler custom resource, configures the
+    cluster-autoscaler deployment for Cluster API, creates the CAPI/CAPOCI
+    objects required for autoscaled worker nodes, and reports installation and
+    reconciliation status through custom resource conditions.
+  displayName: OCI CAPI Autoscaling Operator
+  icon:
+  - base64data: PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzMxMmQyYSIvPjxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjE4IiBmaWxsPSIjYzc0NjM0Ii8+PHRleHQgeD0iMzIiIHk9IjM4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNSIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iI2ZmZmZmZiI+T0NJPC90ZXh0Pjwvc3ZnPg==
+    mediatype: image/svg+xml
+  install:
+    spec:
+      deployments: null
+    strategy: ""
+  installModes:
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - Oracle
+  - OCI
+  - OpenShift
+  - Cluster API
+  - autoscaling
+  links:
+  - name: OCI CAPI Autoscaling Operator
+    url: https://github.com/oracle-samples/oci-openshift-autoscaling
+  maintainers:
+  - email: support@oracle.com
+    name: Oracle
+  maturity: stable
+  minKubeVersion: 1.31.0
+  provider:
+    name: Oracle
+    url: https://www.oracle.com/cloud/
+  version: 0.0.0

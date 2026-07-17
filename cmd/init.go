@@ -72,6 +72,16 @@ func runInit(ctx context.Context, setupLog *logr.Logger) error {
 		setupLog.Error(err, "Failed to process provider environment variables")
 		return err
 	}
+	namespaceConfig := controllers.NamespaceConfig{}
+	if err := envconfig.Process("", &namespaceConfig); err != nil {
+		setupLog.Error(err, "Failed to process namespace environment variables")
+		return err
+	}
+	namespaceConfig = namespaceConfig.WithDefaults()
+	if err := namespaceConfig.Validate(); err != nil {
+		setupLog.Error(err, "Invalid namespace configuration")
+		return err
+	}
 	if err := utils.ValidateProviderVersion(providerConfig.CAPIVersion); err != nil {
 		setupLog.Error(err, "Invalid CAPI_VERSION")
 		return err
@@ -82,6 +92,10 @@ func runInit(ctx context.Context, setupLog *logr.Logger) error {
 	capiCRDs, err := crds.GetClusterctlComponents(ctx, coreProviderName, v1alpha3.CoreProviderType, providerConfig.CAPIVersion)
 	if err != nil {
 		setupLog.Error(err, "Failed to get CRDs for CAPI")
+		return err
+	}
+	if err := setProviderCRDWebhookNamespace(capiCRDs, namespaceConfig.CAPIProviderNamespace); err != nil {
+		setupLog.Error(err, "Failed to configure CAPI CRD webhook namespace")
 		return err
 	}
 	capociProviderVersion := providerConfig.CAPOCIVersion
@@ -95,6 +109,10 @@ func runInit(ctx context.Context, setupLog *logr.Logger) error {
 
 	if err != nil {
 		setupLog.Error(err, "Failed to get CRDs for CAPOCI")
+		return err
+	}
+	if err := setProviderCRDWebhookNamespace(capociCRDs, namespaceConfig.CAPOCIProviderNamespace); err != nil {
+		setupLog.Error(err, "Failed to configure CAPOCI CRD webhook namespace")
 		return err
 	}
 	setupLog.Info("Fetched provider CRDs",
@@ -122,6 +140,22 @@ func runInit(ctx context.Context, setupLog *logr.Logger) error {
 		}
 	}
 	setupLog.Info("All CRDs applied successfully", "created", createdCount, "updated", updatedCount)
+	return nil
+}
+
+func setProviderCRDWebhookNamespace(crds []unstructured.Unstructured, namespace string) error {
+	for i := range crds {
+		serviceName, found, err := unstructured.NestedString(crds[i].Object, "spec", "conversion", "webhook", "clientConfig", "service", "name")
+		if err != nil {
+			return fmt.Errorf("failed to read CRD conversion webhook service name for %s: %w", crds[i].GetName(), err)
+		}
+		if !found || serviceName == "" {
+			continue
+		}
+		if err := unstructured.SetNestedField(crds[i].Object, namespace, "spec", "conversion", "webhook", "clientConfig", "service", "namespace"); err != nil {
+			return fmt.Errorf("failed to set CRD conversion webhook namespace for %s: %w", crds[i].GetName(), err)
+		}
+	}
 	return nil
 }
 

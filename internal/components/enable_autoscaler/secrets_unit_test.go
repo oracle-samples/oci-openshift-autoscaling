@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -33,6 +33,10 @@ func (s *tokenSubresourceClient) Create(_ context.Context, obj client.Object, su
 	tokenRequest := subResource.(*authenticationv1.TokenRequest)
 	s.parent.tokenServiceAccount = client.ObjectKeyFromObject(sa)
 	s.parent.tokenAudiences = append([]string{}, tokenRequest.Spec.Audiences...)
+	if tokenRequest.Spec.ExpirationSeconds != nil {
+		expirationSeconds := *tokenRequest.Spec.ExpirationSeconds
+		s.parent.tokenExpirationSeconds = &expirationSeconds
+	}
 	tokenRequest.Status.Token = s.parent.tokenValue
 	return nil
 }
@@ -47,9 +51,10 @@ func (s *tokenSubresourceClient) Patch(context.Context, client.Object, client.Pa
 
 type tokenRequestClient struct {
 	MockClient
-	tokenValue          string
-	tokenServiceAccount client.ObjectKey
-	tokenAudiences      []string
+	tokenValue             string
+	tokenServiceAccount    client.ObjectKey
+	tokenAudiences         []string
+	tokenExpirationSeconds *int64
 }
 
 func (m *tokenRequestClient) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
@@ -76,25 +81,34 @@ func TestKubeConfigSecretUsesTokenRequest(t *testing.T) {
 	}
 	mockClient := &tokenRequestClient{tokenValue: "short-lived-token"}
 
-	obj, mutateFn := KubeConfigSecret(ctx, mockClient, "oci-openshift-autoscaling-operator", "test-cluster", "capi-manager", instance)
+	obj, mutateFn := KubeConfigSecret(ctx, mockClient, "managed-resource-ns", "managed-resource-ns", "capi-provider-ns", "test-cluster", "capi-manager", instance)
 	if err := mutateFn(); err != nil {
 		t.Fatalf("mutateFn() error = %v", err)
 	}
 
-	if mockClient.tokenServiceAccount != (client.ObjectKey{Name: "capi-manager", Namespace: "oci-openshift-autoscaling-operator"}) {
+	if mockClient.tokenServiceAccount != (client.ObjectKey{Name: "capi-manager", Namespace: "capi-provider-ns"}) {
 		t.Fatalf("unexpected token service account: %#v", mockClient.tokenServiceAccount)
 	}
 	if len(mockClient.tokenAudiences) != 1 || mockClient.tokenAudiences[0] != kubeAPIServerAudience {
 		t.Fatalf("unexpected token audiences: %#v", mockClient.tokenAudiences)
+	}
+	if mockClient.tokenExpirationSeconds == nil || *mockClient.tokenExpirationSeconds != serviceAccountTokenTTLSec {
+		t.Fatalf("unexpected token expiration: %#v", mockClient.tokenExpirationSeconds)
 	}
 
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		t.Fatalf("expected Secret, got %T", obj)
 	}
+	if secret.Namespace != "managed-resource-ns" {
+		t.Fatalf("secret namespace = %q, want managed-resource-ns", secret.Namespace)
+	}
 	rendered := string(secret.Data["value"])
 	if !strings.Contains(rendered, "token: short-lived-token") {
 		t.Fatalf("rendered kubeconfig did not contain requested token: %q", rendered)
+	}
+	if !strings.Contains(rendered, "namespace: managed-resource-ns") {
+		t.Fatalf("rendered kubeconfig did not contain expected context namespace: %q", rendered)
 	}
 	expectedCA := base64.StdEncoding.EncodeToString([]byte("test-ca"))
 	if !strings.Contains(rendered, "certificate-authority-data: "+expectedCA) {

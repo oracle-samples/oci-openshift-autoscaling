@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -62,55 +62,62 @@ var _ = Describe("Enable Autoscaler", func() {
 	Context("GetComponents", func() {
 		It("should return component with all subcomponents", func() {
 			mockClient := &MockClient{}
-			component := GetComponents(ctx, mockClient, "oci-openshift-autoscaling-operator", "test-cluster", "capi-sa", instance, config, false)
+			component := GetComponents(ctx, mockClient, "oci-openshift-autoscaling-operator", "capi-provider", "test-cluster", "capi-sa", instance, config, false)
 
 			Expect(component.Name).To(Equal("EnableAutoscaler"))
-			Expect(component.Subcomponents).To(HaveLen(7))
+			Expect(component.Subcomponents).To(HaveLen(8))
+
+			// Verify ManagedResourceNamespace subcomponent
+			namespace := component.Subcomponents[0]
+			Expect(namespace.Name).To(Equal("managedResourceNamespace"))
+			_, ok := namespace.Object.(*corev1.Namespace)
+			Expect(ok).To(BeTrue())
+			Expect(namespace.MutateFn).NotTo(BeNil())
 
 			// Verify BootstrapConfigSecret subcomponent
-			bootstrapSecret := component.Subcomponents[0]
+			bootstrapSecret := component.Subcomponents[1]
 			Expect(bootstrapSecret.Name).To(Equal("bootstrapConfigSecret"))
-			_, ok := bootstrapSecret.Object.(*corev1.Secret)
+			_, ok = bootstrapSecret.Object.(*corev1.Secret)
 			Expect(ok).To(BeTrue())
 			Expect(bootstrapSecret.MutateFn).NotTo(BeNil())
 
 			// Verify KubeConfigSecret subcomponent
-			kubeConfigSecret := component.Subcomponents[1]
+			kubeConfigSecret := component.Subcomponents[2]
 			Expect(kubeConfigSecret.Name).To(Equal("kubeConfigSecret"))
 			_, ok = kubeConfigSecret.Object.(*corev1.Secret)
 			Expect(ok).To(BeTrue())
 			Expect(kubeConfigSecret.MutateFn).NotTo(BeNil())
 
 			// Verify MachineTemplate subcomponent
-			machineTemplate := component.Subcomponents[2]
+			machineTemplate := component.Subcomponents[3]
 			Expect(machineTemplate.Name).To(Equal("machineTemplate"))
 			_, ok = machineTemplate.Object.(*infrastructurev1beta2.OCIMachineTemplate)
 			Expect(ok).To(BeTrue())
 			Expect(machineTemplate.MutateFn).NotTo(BeNil())
 
 			// Verify MachineDeployment subcomponent
-			machineDeployment := component.Subcomponents[3]
+			machineDeployment := component.Subcomponents[4]
 			Expect(machineDeployment.Name).To(Equal("machineDeployment"))
 			_, ok = machineDeployment.Object.(*unstructured.Unstructured)
 			Expect(ok).To(BeTrue())
 			Expect(machineDeployment.MutateFn).NotTo(BeNil())
 
 			// Verify MachineHealthCheck subcomponent
-			machineHealthCheck := component.Subcomponents[4]
+			machineHealthCheck := component.Subcomponents[5]
 			Expect(machineHealthCheck.Name).To(Equal("machineHealthCheck"))
 			_, ok = machineHealthCheck.Object.(*unstructured.Unstructured)
 			Expect(ok).To(BeTrue())
 			Expect(machineHealthCheck.MutateFn).NotTo(BeNil())
 
 			// Verify OCICluster subcomponent
-			ociCluster := component.Subcomponents[5]
+			ociCluster := component.Subcomponents[6]
 			Expect(ociCluster.Name).To(Equal("ociCluster"))
 			_, ok = ociCluster.Object.(*infrastructurev1beta2.OCICluster)
 			Expect(ok).To(BeTrue())
 			Expect(ociCluster.MutateFn).NotTo(BeNil())
 
 			// Verify CAPICluster subcomponent
-			capiCluster := component.Subcomponents[6]
+			capiCluster := component.Subcomponents[7]
 			Expect(capiCluster.Name).To(Equal("cluster"))
 			_, ok = capiCluster.Object.(*unstructured.Unstructured)
 			Expect(ok).To(BeTrue())
@@ -119,30 +126,33 @@ var _ = Describe("Enable Autoscaler", func() {
 
 		It("should create components with correct names and namespaces", func() {
 			mockClient := &MockClient{}
-			component := GetComponents(ctx, mockClient, "custom-ns", "custom-cluster", "custom-sa", instance, config, false)
+			component := GetComponents(ctx, mockClient, "custom-ns", "capi-provider-ns", "custom-cluster", "custom-sa", instance, config, false)
+
+			managedNamespace := component.Subcomponents[0].Object.(*corev1.Namespace)
+			Expect(managedNamespace.Name).To(Equal("custom-ns"))
 
 			// Check OCICluster
-			ociCluster := component.Subcomponents[5].Object.(*infrastructurev1beta2.OCICluster)
+			ociCluster := component.Subcomponents[6].Object.(*infrastructurev1beta2.OCICluster)
 			Expect(ociCluster.Name).To(Equal("custom-cluster"))
 			Expect(ociCluster.Namespace).To(Equal("custom-ns"))
 
 			// Check CAPICluster
-			capiCluster := component.Subcomponents[6].Object.(*unstructured.Unstructured)
+			capiCluster := component.Subcomponents[7].Object.(*unstructured.Unstructured)
 			Expect(capiCluster.GetName()).To(Equal("custom-cluster"))
 			Expect(capiCluster.GetNamespace()).To(Equal("custom-ns"))
 
 			// Check MachineTemplate
-			machineTemplate := component.Subcomponents[2].Object.(*infrastructurev1beta2.OCIMachineTemplate)
+			machineTemplate := component.Subcomponents[3].Object.(*infrastructurev1beta2.OCIMachineTemplate)
 			Expect(machineTemplate.Name).To(Equal("custom-cluster-autoscaling"))
 			Expect(machineTemplate.Namespace).To(Equal("custom-ns"))
 
 			// Check MachineDeployment
-			machineDeployment := component.Subcomponents[3].Object.(*unstructured.Unstructured)
+			machineDeployment := component.Subcomponents[4].Object.(*unstructured.Unstructured)
 			Expect(machineDeployment.GetName()).To(Equal("custom-cluster"))
 			Expect(machineDeployment.GetNamespace()).To(Equal("custom-ns"))
 
 			// Check MachineHealthCheck
-			machineHealthCheck := component.Subcomponents[4].Object.(*unstructured.Unstructured)
+			machineHealthCheck := component.Subcomponents[5].Object.(*unstructured.Unstructured)
 			Expect(machineHealthCheck.GetName()).To(Equal("custom-cluster-autoscaling"))
 			Expect(machineHealthCheck.GetNamespace()).To(Equal("custom-ns"))
 		})
@@ -150,31 +160,31 @@ var _ = Describe("Enable Autoscaler", func() {
 		It("should append pool identifier to node pool component names only", func() {
 			instance.Spec.Autoscaling.PoolIdentifier = "vm01"
 			mockClient := &MockClient{}
-			component := GetComponents(ctx, mockClient, "custom-ns", "custom-cluster", "custom-sa", instance, config, false)
+			component := GetComponents(ctx, mockClient, "custom-ns", "capi-provider-ns", "custom-cluster", "custom-sa", instance, config, false)
 
-			ociCluster := component.Subcomponents[5].Object.(*infrastructurev1beta2.OCICluster)
+			ociCluster := component.Subcomponents[6].Object.(*infrastructurev1beta2.OCICluster)
 			Expect(ociCluster.Name).To(Equal("custom-cluster"))
 
-			capiCluster := component.Subcomponents[6].Object.(*unstructured.Unstructured)
+			capiCluster := component.Subcomponents[7].Object.(*unstructured.Unstructured)
 			Expect(capiCluster.GetName()).To(Equal("custom-cluster"))
 
-			machineTemplate := component.Subcomponents[2].Object.(*infrastructurev1beta2.OCIMachineTemplate)
+			machineTemplate := component.Subcomponents[3].Object.(*infrastructurev1beta2.OCIMachineTemplate)
 			Expect(machineTemplate.Name).To(Equal("custom-cluster-vm01-autoscaling"))
 
-			machineDeployment := component.Subcomponents[3].Object.(*unstructured.Unstructured)
+			machineDeployment := component.Subcomponents[4].Object.(*unstructured.Unstructured)
 			Expect(machineDeployment.GetName()).To(Equal("custom-cluster-vm01"))
 
-			machineHealthCheck := component.Subcomponents[4].Object.(*unstructured.Unstructured)
+			machineHealthCheck := component.Subcomponents[5].Object.(*unstructured.Unstructured)
 			Expect(machineHealthCheck.GetName()).To(Equal("custom-cluster-vm01-autoscaling"))
 		})
 
 		It("should add OCIClusterIdentity when instance principal is enabled", func() {
 			mockClient := &MockClient{}
-			component := GetComponents(ctx, mockClient, "oci-openshift-autoscaling-operator", "test-cluster", "capi-sa", instance, config, true)
+			component := GetComponents(ctx, mockClient, "oci-openshift-autoscaling-operator", "capi-provider", "test-cluster", "capi-sa", instance, config, true)
 
-			Expect(component.Subcomponents).To(HaveLen(8))
+			Expect(component.Subcomponents).To(HaveLen(9))
 
-			identity := component.Subcomponents[7]
+			identity := component.Subcomponents[8]
 			Expect(identity.Name).To(Equal("ociClusterIdentity"))
 			obj, ok := identity.Object.(*infrastructurev1beta2.OCIClusterIdentity)
 			Expect(ok).To(BeTrue())

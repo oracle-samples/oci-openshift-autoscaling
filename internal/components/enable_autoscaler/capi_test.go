@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -59,6 +59,27 @@ var _ = Describe("CAPI Components", func() {
 				DefinedTagsNamespace: "test-defined-tags-namespace",
 			},
 		}
+	})
+
+	Context("NodePoolName", func() {
+		It("should validate the generated node pool name length", func() {
+			instance.Spec.Autoscaling.PoolIdentifier = "pool1"
+			nodePoolName := NodePoolName(strings.Repeat("a", 47), instance)
+
+			err := ValidateNodePoolName(nodePoolName)
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("at most 51 characters"))
+		})
+
+		It("should accept node pool names within the generated resource name budget", func() {
+			instance.Spec.Autoscaling.PoolIdentifier = "pool1"
+			nodePoolName := NodePoolName(strings.Repeat("a", 45), instance)
+
+			err := ValidateNodePoolName(nodePoolName)
+
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 
 	Context("OCICluster", func() {
@@ -144,13 +165,14 @@ var _ = Describe("CAPI Components", func() {
 	})
 
 	Context("CAPICluster", func() {
-		It("should build infrastructure refs with apiGroup for Cluster API v1beta2", func() {
-			ref, err := infrastructureRef(ociInfrastructureAPIVersion, ociClusterKind, "test-cluster")
+		It("should build infrastructure refs with apiVersion for Cluster API v1beta1", func() {
+			ref, err := infrastructureRef(ociInfrastructureAPIVersion, ociClusterKind, "test-namespace", "test-cluster")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ref).To(Equal(map[string]interface{}{
-				"apiGroup": "infrastructure.cluster.x-k8s.io",
-				"kind":     "OCICluster",
-				"name":     "test-cluster",
+				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2",
+				"kind":       "OCICluster",
+				"namespace":  "test-namespace",
+				"name":       "test-cluster",
 			}))
 		})
 
@@ -162,7 +184,7 @@ var _ = Describe("CAPI Components", func() {
 			// Verify initial state
 			Expect(cluster.GetName()).To(Equal("test-cluster"))
 			Expect(cluster.GetNamespace()).To(Equal("oci-openshift-autoscaling-operator"))
-			Expect(cluster.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta2"))
+			Expect(cluster.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta1"))
 
 			// Apply mutation
 			err := mutateFn()
@@ -199,14 +221,19 @@ var _ = Describe("CAPI Components", func() {
 			Expect(found).To(BeTrue())
 			Expect(infraRefName).To(Equal("test-cluster"))
 
-			infraRefAPIGroup, found, err := unstructured.NestedString(cluster.Object, "spec", "infrastructureRef", "apiGroup")
+			infraRefAPIVersion, found, err := unstructured.NestedString(cluster.Object, "spec", "infrastructureRef", "apiVersion")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(infraRefAPIGroup).To(Equal("infrastructure.cluster.x-k8s.io"))
+			Expect(infraRefAPIVersion).To(Equal("infrastructure.cluster.x-k8s.io/v1beta2"))
+
+			infraRefNamespace, found, err := unstructured.NestedString(cluster.Object, "spec", "infrastructureRef", "namespace")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(infraRefNamespace).To(Equal("oci-openshift-autoscaling-operator"))
 		})
 
 		It("should reject invalid infrastructure apiVersions early", func() {
-			_, err := infrastructureRef("v1beta2", ociClusterKind, "test-cluster")
+			_, err := infrastructureRef("v1beta2", ociClusterKind, "test-namespace", "test-cluster")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("must include an API group"))
 		})
@@ -246,12 +273,12 @@ var _ = Describe("CAPI Components", func() {
 			Expect(template.Spec.Template.Spec.FreeformTags).To(HaveKeyWithValue(utils.OCIInstanceAutoscalerPoolTag, "bm01"))
 		})
 
-		It("should reject generated OCIMachineTemplate names longer than the DNS label limit", func() {
+		It("should reject node pool names longer than the generated name budget", func() {
 			_, mutateFn := OCIMachineTemplate("oci-openshift-autoscaling-operator", strings.Repeat("a", 52), instance, config)
 
 			err := mutateFn()
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("autoscaling resource name"))
+			Expect(err.Error()).To(ContainSubstring("at most 51 characters"))
 		})
 
 		It("should fail when bare metal subnet ID is empty for BM shapes", func() {
@@ -474,13 +501,13 @@ var _ = Describe("CAPI Components", func() {
 			Expect(infraRefName).To(Equal("test-cluster-bm01-autoscaling"))
 		})
 
-		It("should reject generated node pool names longer than the DNS label limit", func() {
+		It("should reject generated node pool names longer than the generated name budget", func() {
 			instance.Spec.Autoscaling.PoolIdentifier = "pool1"
-			_, mutateFn := MachineDeployment("oci-openshift-autoscaling-operator", strings.Repeat("a", 58), instance, config)
+			_, mutateFn := MachineDeployment("oci-openshift-autoscaling-operator", strings.Repeat("a", 47), instance, config)
 
 			err := mutateFn()
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("node pool name"))
+			Expect(err.Error()).To(ContainSubstring("at most 51 characters"))
 		})
 
 		It("should create MachineDeployment with correct configuration", func() {
@@ -491,7 +518,7 @@ var _ = Describe("CAPI Components", func() {
 			// Verify initial state
 			Expect(deployment.GetName()).To(Equal("test-cluster"))
 			Expect(deployment.GetNamespace()).To(Equal("oci-openshift-autoscaling-operator"))
-			Expect(deployment.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta2"))
+			Expect(deployment.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta1"))
 
 			// Apply mutation
 			err := mutateFn()
@@ -528,7 +555,9 @@ var _ = Describe("CAPI Components", func() {
 			templateLabels, found, err := unstructured.NestedStringMap(deployment.Object, "spec", "template", "metadata", "labels")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(templateLabels).To(Equal(selectorLabels))
+			Expect(templateLabels).To(HaveKeyWithValue("cluster.x-k8s.io/cluster-name", "test-cluster"))
+			Expect(templateLabels).To(HaveKeyWithValue("cluster.x-k8s.io/deployment-name", "test-cluster"))
+			Expect(templateLabels).To(HaveKeyWithValue(utils.ManagedByLabel, instance.Name))
 
 			templateClusterName, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "clusterName")
 			Expect(err).NotTo(HaveOccurred())
@@ -551,10 +580,15 @@ var _ = Describe("CAPI Components", func() {
 			Expect(found).To(BeTrue())
 			Expect(infraRefName).To(Equal("test-cluster-autoscaling"))
 
-			infraRefAPIGroup, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "infrastructureRef", "apiGroup")
+			infraRefAPIVersion, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "infrastructureRef", "apiVersion")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(infraRefAPIGroup).To(Equal("infrastructure.cluster.x-k8s.io"))
+			Expect(infraRefAPIVersion).To(Equal("infrastructure.cluster.x-k8s.io/v1beta2"))
+
+			infraRefNamespace, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "infrastructureRef", "namespace")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(infraRefNamespace).To(Equal("oci-openshift-autoscaling-operator"))
 
 			_, found, err = unstructured.NestedMap(deployment.Object, "spec", "rollout")
 			Expect(err).NotTo(HaveOccurred())
@@ -674,7 +708,7 @@ var _ = Describe("CAPI Components", func() {
 
 			Expect(mhc.GetName()).To(Equal("test-cluster-autoscaling"))
 			Expect(mhc.GetNamespace()).To(Equal("oci-openshift-autoscaling-operator"))
-			Expect(mhc.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta2"))
+			Expect(mhc.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta1"))
 			Expect(mhc.GetKind()).To(Equal("MachineHealthCheck"))
 
 			err := mutateFn()

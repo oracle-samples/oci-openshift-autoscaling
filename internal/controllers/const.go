@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -9,9 +9,14 @@ const (
 	FinalizerName  = "ociclusterautoscaler.capi.openshift.io/finalizer"
 	ManagedByLabel = "capi.openshift.io/managed-by"
 
-	OCICAPIClusterName    = "oci-capi-cluster"
-	CAPISystemNamespace   = "oci-openshift-autoscaling-operator"
-	CAPOCISystemNamespace = "oci-openshift-autoscaling-operator"
+	OCICAPIClusterName = "oci-capi-cluster"
+
+	DefaultOperatorNamespace            = "oci-openshift-autoscaling-operator"
+	DefaultCAPIProviderNamespace        = DefaultOperatorNamespace
+	DefaultCAPOCIProviderNamespace      = DefaultOperatorNamespace
+	DefaultManagedResourceNamespace     = DefaultOperatorNamespace
+	DefaultAutoscalerNamespace          = DefaultOperatorNamespace
+	DefaultAutoscalerDiscoveryNamespace = DefaultManagedResourceNamespace
 
 	CAPIDeploymentName   = "capi-manager"
 	CAPOCIDeploymentName = "capoci-controller-manager"

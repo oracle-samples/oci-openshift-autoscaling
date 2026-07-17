@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -14,12 +14,15 @@ import (
 	"encoding/pem"
 	"net"
 	"testing"
+	"time"
 
+	capiv1alpha1 "github.com/openshift/oci-capi-operator/api/v1alpha1"
 	infrastructurev1beta2 "github.com/oracle/cluster-api-provider-oci/api/v1beta2"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -29,6 +32,9 @@ func TestHasMatchingOCIMachine_DoesNotAllowSubstringMatch(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
 	}
 
 	machine := &infrastructurev1beta2.OCIMachine{
@@ -48,7 +54,10 @@ func TestHasMatchingOCIMachine_DoesNotAllowSubstringMatch(t *testing.T) {
 		ClusterName:      "test-cluster",
 	}
 
-	matched, _ := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	matched, _, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
+	}
 	if matched {
 		t.Fatalf("expected substring hostname not to match OCIMachine name")
 	}
@@ -60,6 +69,9 @@ func TestHasMatchingOCIMachine_ExactMatchWithinNamespaceAndCluster(t *testing.T)
 	scheme := runtime.NewScheme()
 	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
 	}
 
 	machine := &infrastructurev1beta2.OCIMachine{
@@ -79,7 +91,10 @@ func TestHasMatchingOCIMachine_ExactMatchWithinNamespaceAndCluster(t *testing.T)
 		ClusterName:      "test-cluster",
 	}
 
-	matched, machineName := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	matched, machineName, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
+	}
 	if !matched {
 		t.Fatalf("expected exact machine match within scope")
 	}
@@ -94,6 +109,9 @@ func TestHasMatchingOCIMachine_RejectsEmptyClusterScope(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
 	}
 
 	machine := &infrastructurev1beta2.OCIMachine{
@@ -112,7 +130,10 @@ func TestHasMatchingOCIMachine_RejectsEmptyClusterScope(t *testing.T) {
 		MachineNamespace: "oci-openshift-autoscaling-operator",
 	}
 
-	matched, _ := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	matched, _, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
+	}
 	if matched {
 		t.Fatalf("expected no match when cluster scope is unset")
 	}
@@ -124,6 +145,9 @@ func TestHasMatchingOCIMachine_RejectsWrongClusterScope(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
 	}
 
 	machine := &infrastructurev1beta2.OCIMachine{
@@ -143,10 +167,217 @@ func TestHasMatchingOCIMachine_RejectsWrongClusterScope(t *testing.T) {
 		ClusterName:      "test-cluster",
 	}
 
-	matched, _ := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	matched, _, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
+	}
 	if matched {
 		t.Fatalf("expected no match when OCIMachine cluster label is outside configured scope")
 	}
+}
+
+func TestHasMatchingOCIMachine_UsesAutoscalerClusterNameOverride(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add infrastructure scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
+	}
+
+	machine := &infrastructurev1beta2.OCIMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "worker-1",
+			Namespace: "custom-machine-ns",
+			Labels: map[string]string{
+				clusterNameLabelKey: "custom-cluster",
+			},
+		},
+	}
+	autoscaler := &capiv1alpha1.OCIClusterAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ociclusterautoscaler",
+			Namespace: "operator-ns",
+		},
+		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
+			CAPI: capiv1alpha1.CAPIConfig{
+				Namespace:   "custom-machine-ns",
+				ClusterName: "custom-cluster",
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(machine, autoscaler).Build()
+	r := &CertificateApprovalReconciler{
+		Client:           c,
+		MachineNamespace: "startup-machine-ns",
+		ClusterName:      "startup-cluster",
+	}
+
+	matched, machineName, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected OCIMachine to match CR-provided CSR approval scope")
+	}
+	if machineName != "worker-1" {
+		t.Fatalf("expected machine name worker-1, got %s", machineName)
+	}
+}
+
+func TestHasMatchingOCIMachine_UsesSingletonOwnerWhenMultipleAutoscalersExist(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add infrastructure scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
+	}
+
+	owner := &capiv1alpha1.OCIClusterAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "owner",
+			Namespace:         "operator-a",
+			CreationTimestamp: metav1.NewTime(time.Unix(1, 0)),
+		},
+		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
+			CAPI: capiv1alpha1.CAPIConfig{
+				Namespace:   "owner-machine-ns",
+				ClusterName: "owner-cluster",
+			},
+		},
+	}
+	contender := &capiv1alpha1.OCIClusterAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "contender",
+			Namespace:         "operator-b",
+			CreationTimestamp: metav1.NewTime(time.Unix(2, 0)),
+		},
+		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
+			CAPI: capiv1alpha1.CAPIConfig{
+				Namespace:   "contender-machine-ns",
+				ClusterName: "contender-cluster",
+			},
+		},
+	}
+	machine := &infrastructurev1beta2.OCIMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "worker-1",
+			Namespace: "owner-machine-ns",
+			Labels: map[string]string{
+				clusterNameLabelKey: "owner-cluster",
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(owner, contender, machine).Build()
+	r := &CertificateApprovalReconciler{
+		Client:           c,
+		MachineNamespace: "startup-machine-ns",
+		ClusterName:      "startup-cluster",
+	}
+
+	matched, machineName, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected OCIMachine to match singleton owner scope")
+	}
+	if machineName != "worker-1" {
+		t.Fatalf("expected machine name worker-1, got %s", machineName)
+	}
+}
+
+func TestHasMatchingOCIMachine_DoesNotUseStartupScopeWhenAutoscalerOwnerExists(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add infrastructure scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
+	}
+
+	autoscaler := &capiv1alpha1.OCIClusterAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ociclusterautoscaler",
+			Namespace: "operator-ns",
+		},
+		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
+			CAPI: capiv1alpha1.CAPIConfig{
+				Namespace:   "custom-machine-ns",
+				ClusterName: "custom-cluster",
+			},
+		},
+	}
+	startupScopeMachine := &infrastructurev1beta2.OCIMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "worker-1",
+			Namespace: "startup-machine-ns",
+			Labels: map[string]string{
+				clusterNameLabelKey: "startup-cluster",
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(autoscaler, startupScopeMachine).Build()
+	r := &CertificateApprovalReconciler{
+		Client:           c,
+		MachineNamespace: "startup-machine-ns",
+		ClusterName:      "startup-cluster",
+	}
+
+	matched, _, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
+	}
+	if matched {
+		t.Fatalf("expected startup scope not to match when an autoscaler owner defines CSR approval scope")
+	}
+}
+
+func TestHasMatchingOCIMachine_ReturnsErrorWhenScopeResolutionFails(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := infrastructurev1beta2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add infrastructure scheme: %v", err)
+	}
+	if err := capiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add autoscaler scheme: %v", err)
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &CertificateApprovalReconciler{
+		Client: &failingAutoscalerListClient{
+			Client: c,
+		},
+		MachineNamespace: "startup-machine-ns",
+		ClusterName:      "startup-cluster",
+	}
+
+	_, _, err := r.hasMatchingOCIMachine(context.Background(), "worker-1")
+	if err == nil {
+		t.Fatalf("expected scope resolution error")
+	}
+}
+
+type failingAutoscalerListClient struct {
+	client.Client
+}
+
+func (c *failingAutoscalerListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := list.(*capiv1alpha1.OCIClusterAutoscalerList); ok {
+		return context.DeadlineExceeded
+	}
+	return c.Client.List(ctx, list, opts...)
 }
 
 func TestGetCSRHostname_ClientKubeletRejectsNonBootstrapperUsername(t *testing.T) {

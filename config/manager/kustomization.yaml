@@ -1,4 +1,4 @@
-# Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+# Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 
 resources:
@@ -9,4 +9,4 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: sjc.ocir.io/axpiwif30tzw/armcapinew-amd64
+  newName: ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling

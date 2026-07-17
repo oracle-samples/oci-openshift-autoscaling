@@ -9,6 +9,15 @@ The OCI OpenShift Autoscaling Operator automates the deployment and management o
 
 This project is intended for developers and operators who need to enable autoscaling for OpenShift worker nodes on OCI. It provides an operator, Kubernetes manifests, sample custom resources, and helper scripts for preparing the OCI and OpenShift configuration that the autoscaling stack requires.
 
+## Description
+
+The OCI OpenShift Autoscaling Operator deploys all of the necessary components in order to enable autoscaling in an OCI OCP cluster:
+
+- CAPI and CAPOCI installation management
+- [Cluster-autoscaler](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler) deployment and configuration
+- CAPI CRs to manage the OCI cluster
+- Certificate approver for new nodes
+
 ## Getting Started
 
 ### Prerequisites
@@ -47,139 +56,62 @@ oc whoami
 oci iam region list
 ```
 
-### Configure OCI Access
+### Deployment Source of Truth
 
-The `config.sh` helper uses the local `oci` CLI to discover OCI resource identifiers for the target cluster. The CLI must be authenticated before you source the helper script.
+The supported installation, verification, scale testing, cleanup, and troubleshooting flow is owned by the `oracle-quickstart/oci-openshift` Terraform stack documentation:
+https://github.com/oracle-quickstart/oci-openshift/blob/main/docs/AUTOSCALER.md
 
-This operator supports two Cluster API Provider OCI authentication modes:
+Use that Terraform stack as the deployment source of truth. This repository keeps the operator source, CRD schema, generated manifest sources, and tests.
 
-- Instance principal mode: CAPOCI uses instance principal authentication from the cluster-side workload.
-- API key mode: CAPOCI uses explicit OCI user credentials from the local OCI CLI configuration.
+### Runtime Image
 
-For instance principal mode, set this value in `config.sh`:
-
-```sh
-use_instance_principal=true
-```
-
-For API key mode, keep this value in `config.sh`:
+The default deployment image is:
 
 ```sh
-use_instance_principal=false
+docker pull ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling:latest
 ```
 
-If you need to configure OCI API key authentication, follow the Oracle Cloud Infrastructure API signing key instructions:
-https://docs.oracle.com/en-us/iaas/Content/API/Concepts/apisigningkey.htm
+The Makefile and kustomize defaults use this image. Override `IMG` only for development builds, and keep it fully qualified with a registry host.
 
-### Prepare the Red Hat CoreOS Image
+### Development
 
-Autoscaled worker nodes require a Red Hat CoreOS image that matches the OpenShift cluster version.
+Local prerequisites:
 
-For example, for OpenShift 4.19:
+- Go `1.24+` matching `go.mod`
+- Docker or another compatible container tool
+- `oc` and a kubeconfig only when running cluster verification or cleanup helpers
 
-```sh
-curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.19/4.19.0/rhcos-4.19.0-x86_64-openstack.x86_64.qcow2.gz
-gzip -d rhcos-4.19.0-x86_64-openstack.x86_64.qcow2.gz
-```
-
-Upload the image to OCI and create a custom image. See the OCI custom image documentation:
-https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/importingcustomimagelinux.htm
-
-Record the custom image name. You will use it in `config.sh`.
-
-For bare metal worker nodes, prepare a Red Hat CoreOS image with the required iSCSI configuration before uploading it to Object Storage and creating the custom image.
-
-### Configure the Deployment
-
-Edit `config.sh` and set the required values:
-
-```sh
-compartment_name=
-image_name=
-nsg_name=
-compute_nsg_name=
-ocp_subnet_name=
-bare_metal_subnet_name=
-```
-
-Source the configuration:
-
-```sh
-source config.sh
-```
-
-The helper exports the environment variables used to render the deployment manifests.
-
-### Build
-
-Build the manager binary:
+Build locally:
 
 ```sh
 make build
 ```
 
-Build a container image:
+Build a local development image:
 
 ```sh
-export IMG=<registry>/<repository>/oci-openshift-autoscaling-operator:<tag>
-make build-image
+IMG=ghcr.io/<owner>/<repo>:<tag> make build-image
 ```
 
-Build and push a multi-architecture image:
+Push and release targets such as `make push-image`, `make buildx`, `make bundle-push`, and `make catalog-push` refuse unqualified image names and mutable `:latest` tags.
 
-```sh
-export IMG=<registry>/<repository>/oci-openshift-autoscaling-operator:<tag>
-make buildx
-```
+### Provider Version Compatibility
 
-### Deploy
+The operator pins provider component versions through `CAPI_VERSION` and `CAPOCI_VERSION` in the generated install manifests. The default provider versions are:
 
-Deploy the operator:
+- CAPI `v1.7.0`
+- CAPOCI `v0.20.2`
 
-```sh
-export IMG=<registry>/<repository>/oci-openshift-autoscaling-operator:<tag>
-make deploy
-```
+Treat provider version changes as an explicit upgrade:
 
-By default, the operator and autoscaling stack run in the `oci-openshift-autoscaling-operator` namespace. `cert-manager` remains in the upstream `cert-manager` namespace.
-
-Create the sample `OCIClusterAutoscaler` resource:
-
-```sh
-make apply
-```
-
-Verify the deployments and Cluster API resources:
-
-```sh
-oc get pods -n oci-openshift-autoscaling-operator
-oc get cluster -n oci-openshift-autoscaling-operator
-oc get ocicluster -n oci-openshift-autoscaling-operator
-oc get machinedeployment -n oci-openshift-autoscaling-operator
-oc get ocimachinetemplate -n oci-openshift-autoscaling-operator
-```
-
-### Clean Up
-
-Remove only the OCI OpenShift Autoscaling Operator resources:
-
-```sh
-make cleanup-autoscaler
-```
-
-Remove the operator, Cluster API resources, CAPOCI resources, and cluster-autoscaler resources:
-
-```sh
-make cleanup-autoscaler-full
-```
-
-The full cleanup target is destructive. It preserves `cert-manager` by default. To remove `cert-manager` resources installed by provider bootstrap, opt in explicitly:
-
-```sh
-make cleanup-autoscaler-full AUTOSCALER_DELETE_CERT_MANAGER=true
-```
+- Set both provider versions through the Terraform stack path.
+- Validate generated `clusterctl` components before rollout.
+- Review Cluster API upgrade notes before crossing a major or minor boundary, because webhook contracts and generated management-cluster manifests can change.
 
 ## Documentation
+
+The supported installation, verification, scale testing, cleanup, and troubleshooting flow is documented in the `oracle-quickstart/oci-openshift` Terraform stack documentation:
+https://github.com/oracle-quickstart/oci-openshift/blob/main/docs/AUTOSCALER.md
 
 Developer-oriented documentation is maintained in this repository:
 
@@ -193,34 +125,30 @@ Product documentation for Oracle products and services is published on https://d
 
 The repository includes a sample `OCIClusterAutoscaler` custom resource in `config/samples/capi_v1beta1_ociclusterautoscaler.yaml`.
 
-Apply the sample:
+For production and customer validation flows, generate and apply the autoscaler manifest from the `oracle-quickstart/oci-openshift` Terraform stack. This repository's `config/` manifests are source and development assets.
+
+After installation, check the autoscaler resource:
 
 ```sh
-make apply
+oc get ociclusterautoscaler -n oci-openshift-autoscaling-operator ociclusterautoscaler -o yaml
 ```
 
-Test autoscaling by creating workload demand that exceeds the current cluster capacity:
+Update the autoscaler min/max node values:
 
 ```sh
-oc create deployment nginx --namespace default --image=docker.io/nginx:latest --replicas=0
-oc set resources deployment -n default nginx --requests=memory=2Gi
-oc scale deployment -n default nginx --replicas=20
+oc patch ociclusterautoscaler.capi.openshift.io -n oci-openshift-autoscaling-operator ociclusterautoscaler \
+  --type=merge \
+  -p '{"spec":{"autoscaling":{"minNodes":1,"maxNodes":3}}}'
 ```
 
 Watch the autoscaling resources:
 
 ```sh
-oc get machinedeployment -n oci-openshift-autoscaling-operator
-oc get machineset -n oci-openshift-autoscaling-operator
-oc get ocicluster -n oci-openshift-autoscaling-operator
-oc get ocimachine -n oci-openshift-autoscaling-operator
+oc get machinedeployments.cluster.x-k8s.io -n oci-openshift-autoscaling-operator
+oc get machinesets.cluster.x-k8s.io -n oci-openshift-autoscaling-operator
+oc get machines.cluster.x-k8s.io -n oci-openshift-autoscaling-operator -o wide
+oc get ocimachines.infrastructure.cluster.x-k8s.io -n oci-openshift-autoscaling-operator -o wide
 oc get nodes
-```
-
-Scale the example workload back down:
-
-```sh
-oc scale deployment -n default nginx --replicas=0
 ```
 
 ## Help

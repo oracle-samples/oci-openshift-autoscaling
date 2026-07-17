@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -21,15 +21,15 @@ import (
 
 const (
 	kubeAPIServerAudience     = "https://kubernetes.default.svc"
-	serviceAccountTokenTTLSec = int64(3600)
+	serviceAccountTokenTTLSec = int64(24 * 60 * 60)
 )
 
 // BootstrapConfigSecret creates a secret that contains the bootstrap config for additional workernodes that are added to the cluster.
-func BootstrapConfigSecret(ctx context.Context, client client.Client, capiSystemNamespace string, clusterName string, instance *ocicapioperatorv1alpha1.OCIClusterAutoscaler) (client.Object, func() error) {
+func BootstrapConfigSecret(ctx context.Context, client client.Client, secretNamespace string, clusterName string, instance *ocicapioperatorv1alpha1.OCIClusterAutoscaler) (client.Object, func() error) {
 	bootstrapConfigSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-bootstrap", clusterName),
-			Namespace: capiSystemNamespace,
+			Namespace: secretNamespace,
 		},
 	}
 
@@ -38,7 +38,7 @@ func BootstrapConfigSecret(ctx context.Context, client client.Client, capiSystem
 			"component", "BootstrapConfigSecret",
 			"cluster", clusterName,
 			"secret", bootstrapConfigSecret.Name,
-			"namespace", capiSystemNamespace,
+			"namespace", secretNamespace,
 		)
 		utils.SetDefaultLabels(bootstrapConfigSecret, clusterName)
 		logger.Info("Generating bootstrap ignition secret")
@@ -79,11 +79,11 @@ users:
 `
 
 // KubeConfigSecret creates a secret for CAPI so it can access this cluster.
-func KubeConfigSecret(ctx context.Context, client client.Client, capiSystemNamespace string, clusterName string, capiServiceAccountName string, instance *ocicapioperatorv1alpha1.OCIClusterAutoscaler) (client.Object, func() error) {
+func KubeConfigSecret(ctx context.Context, client client.Client, secretNamespace string, contextNamespace string, tokenServiceAccountNamespace string, clusterName string, capiServiceAccountName string, instance *ocicapioperatorv1alpha1.OCIClusterAutoscaler) (client.Object, func() error) {
 	kubeConfigSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-kubeconfig", clusterName),
-			Namespace: capiSystemNamespace,
+			Namespace: secretNamespace,
 		},
 	}
 
@@ -92,13 +92,15 @@ func KubeConfigSecret(ctx context.Context, client client.Client, capiSystemNames
 			"component", "KubeConfigSecret",
 			"cluster", clusterName,
 			"secret", kubeConfigSecret.Name,
-			"namespace", capiSystemNamespace,
+			"namespace", secretNamespace,
+			"contextNamespace", contextNamespace,
 			"serviceAccount", capiServiceAccountName,
+			"serviceAccountNamespace", tokenServiceAccountNamespace,
 		)
 		serviceAccount := &corev1.ServiceAccount{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      capiServiceAccountName,
-				Namespace: capiSystemNamespace,
+				Namespace: tokenServiceAccountNamespace,
 			},
 		}
 		tokenRequest := &authenticationv1.TokenRequest{
@@ -130,7 +132,7 @@ func KubeConfigSecret(ctx context.Context, client client.Client, capiSystemNames
 			clusterName,
 			clusterName,
 			capiServiceAccountName,
-			capiSystemNamespace,
+			contextNamespace,
 			clusterName,
 			capiServiceAccountName,
 			tokenRequest.Status.Token,

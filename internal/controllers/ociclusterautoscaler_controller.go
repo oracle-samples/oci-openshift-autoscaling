@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -7,10 +7,11 @@ package controllers
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"reflect"
 	"sort"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -33,11 +34,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -45,6 +47,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+const kubeconfigSecretRefreshInterval = 12 * time.Hour
 
 // OCIClusterAutoscalerReconciler reconciles a OCIClusterAutoscaler object
 type OCIClusterAutoscalerReconciler struct {
@@ -55,12 +59,8 @@ type OCIClusterAutoscalerReconciler struct {
 	ProviderConfig    ProviderConfig
 	CAPOCIProvider    ProviderConfig
 	AutoScalingConfig enableautoscaler.Config
-
-	ComputeClientFactory computeClientFactory
-
-	orphanCleanupBackoffLock  sync.Mutex
-	orphanCleanupBackoffUntil time.Time
-	orphanCleanupBackoffError string
+	NamespaceConfig   NamespaceConfig
+	EventRecorder     record.EventRecorder
 }
 
 type ProviderConfig struct {
@@ -74,15 +74,17 @@ type ProviderConfig struct {
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=*/status;*/finalizers,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=namespaces;serviceaccounts;secrets;configmaps;services;events,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts/token,verbs=create
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterroles/aggregation;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations;mutatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=apiextensions.k8s.io;security.openshift.io;coordination.k8s.io,resources=customresourcedefinitions;securitycontextconstraints;leases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;create;update
+// +kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=ocicluster/status;ocimachines,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddressclaims;ipaddresses;ipaddressclaims/status,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=runtime.cluster.x-k8s.io,resources=extensionconfigs;extensionconfigs/status,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=authentication.k8s.io;authorization.k8s.io,resources=tokenreviews;subjectaccessreviews,verbs=create
 // +kubebuilder:rbac:groups=addons.cluster.x-k8s.io;bootstrap.cluster.x-k8s.io;controlplane.cluster.x-k8s.io;infrastructure.cluster.x-k8s.io,resources=*,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=config.openshift.io,resources=infrastructures,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=infrastructures;networks,verbs=get;list;watch
 
 func (r *OCIClusterAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -90,7 +92,7 @@ func (r *OCIClusterAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl
 	instance := &capiv1alpha1.OCIClusterAutoscaler{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			logger.Info("OCIClusterAutoscaler resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
@@ -100,7 +102,8 @@ func (r *OCIClusterAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl
 
 	// Initialize status if not set
 	if instance.Status.Phase == "" {
-		instance.Status.Phase = "Initializing"
+		instance.Status.Phase = PhaseInitializing
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionReady, metav1.ConditionUnknown, ReasonInitializing, "OCIClusterAutoscaler reconciliation has started")
 		if err := r.Status().Update(ctx, instance); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -114,14 +117,10 @@ func (r *OCIClusterAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 		if conflict {
 			message := fmt.Sprintf("OCIClusterAutoscaler is singleton; active owner is %s/%s", owner.Namespace, owner.Name)
-			instance.Status.Phase = "Blocked"
+			instance.Status.Phase = PhaseBlocked
 			instance.Status.ObservedGeneration = instance.Generation
-			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-				Type:    "Ready",
-				Status:  metav1.ConditionFalse,
-				Reason:  ReasonSingletonConflict,
-				Message: message,
-			})
+			r.setConditionAndRecord(instance, capiv1alpha1.ConditionPolicyAccepted, metav1.ConditionFalse, ReasonSingletonConflict, message)
+			r.setConditionAndRecord(instance, capiv1alpha1.ConditionReady, metav1.ConditionFalse, ReasonSingletonConflict, message)
 			return ctrl.Result{RequeueAfter: time.Minute}, r.Status().Update(ctx, instance)
 		}
 		if !controllerutil.ContainsFinalizer(instance, FinalizerName) {
@@ -135,12 +134,37 @@ func (r *OCIClusterAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl
 				return ctrl.Result{}, err
 			}
 			if ownsSharedResources {
+				instance.Status.Phase = PhaseCleaningUp
+				instance.Status.ObservedGeneration = instance.Generation
+				r.setConditionAndRecord(instance, capiv1alpha1.ConditionCleanupSucceeded, metav1.ConditionUnknown, ReasonCleanupStarted, "Deleting managed autoscaler resources")
+				if err := r.Status().Update(ctx, instance); err != nil {
+					return ctrl.Result{}, err
+				}
 				if err := r.cleanup(ctx, instance); err != nil {
 					logger.Error(err, "Failed to cleanup")
+					instance.Status.Phase = PhaseError
+					instance.Status.ObservedGeneration = instance.Generation
+					message := fmt.Sprintf("Cleanup failed: %v", err)
+					r.setConditionAndRecord(instance, capiv1alpha1.ConditionCleanupSucceeded, metav1.ConditionFalse, ReasonCleanupFailed, message)
+					r.setConditionAndRecord(instance, capiv1alpha1.ConditionReady, metav1.ConditionFalse, ReasonCleanupFailed, message)
+					if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
+						logger.Error(updateErr, "Failed to update status after cleanup error")
+						return ctrl.Result{}, stderrors.Join(err, fmt.Errorf("failed to update status after cleanup error: %w", updateErr))
+					}
+					return ctrl.Result{}, err
+				}
+				instance.Status.ObservedGeneration = instance.Generation
+				r.setConditionAndRecord(instance, capiv1alpha1.ConditionCleanupSucceeded, metav1.ConditionTrue, ReasonCleanupSucceeded, "Managed autoscaler resources were deleted")
+				if err := r.Status().Update(ctx, instance); err != nil {
 					return ctrl.Result{}, err
 				}
 			} else {
 				logger.Info("Skipping cleanup for non-owner OCIClusterAutoscaler", "resource", instance.Name, "namespace", instance.Namespace)
+				instance.Status.ObservedGeneration = instance.Generation
+				r.setConditionAndRecord(instance, capiv1alpha1.ConditionCleanupSucceeded, metav1.ConditionTrue, ReasonCleanupSkipped, "Cleanup skipped because this resource is not the active singleton owner")
+				if err := r.Status().Update(ctx, instance); err != nil {
+					return ctrl.Result{}, err
+				}
 			}
 			controllerutil.RemoveFinalizer(instance, FinalizerName)
 			return ctrl.Result{}, r.Update(ctx, instance)
@@ -153,29 +177,20 @@ func (r *OCIClusterAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl
 	// Reconcile the OCI CAPI stack
 	result, err := r.reconcileOCICapiStack(ctx, instance)
 	if err != nil {
-		// Update status with error condition
-		meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-			Type:    "Ready",
-			Status:  metav1.ConditionFalse,
-			Reason:  "ReconcileError",
-			Message: err.Error(),
-		})
-		instance.Status.Phase = "Error"
-		r.Status().Update(ctx, instance)
+		if !r.setReadyConditionFromFailedStage(instance) {
+			instance.Status.Phase = PhaseError
+			r.setConditionAndRecord(instance, capiv1alpha1.ConditionReady, metav1.ConditionFalse, ReasonReconcileError, err.Error())
+		}
+		instance.Status.ObservedGeneration = instance.Generation
+		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status after reconcile error")
+			return result, stderrors.Join(err, fmt.Errorf("failed to update status after reconcile error: %w", updateErr))
+		}
 		return result, err
 	}
 
 	// Update status
-	instance.Status.ObservedGeneration = instance.Generation
-	if instance.Status.CAPIInstalled && instance.Status.ClusterAutoscalerDeployed {
-		instance.Status.Phase = "Ready"
-		meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-			Type:    "Ready",
-			Status:  metav1.ConditionTrue,
-			Reason:  "ReconcileSuccess",
-			Message: "OCI CAPI autoscaler is ready",
-		})
-	}
+	r.setAggregateReadyCondition(instance)
 
 	if !reflect.DeepEqual(originalStatus, &instance.Status) {
 		if err := r.Status().Update(ctx, instance); err != nil {
@@ -189,59 +204,92 @@ func (r *OCIClusterAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl
 func (r *OCIClusterAutoscalerReconciler) reconcileOCICapiStack(ctx context.Context, instance *capiv1alpha1.OCIClusterAutoscaler) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	useCAPOCIHostNetwork := r.CAPOCICredentials.UsesInstancePrincipal()
+	namespaces := r.Namespaces()
+	managedResourceNamespace := managedResourceNamespaceFor(instance, namespaces)
 	logger.Info("Reconciling OCI CAPI autoscaler stack",
 		"resource", instance.Name,
 		"namespace", instance.Namespace,
 		"useCAPOCIHostNetwork", useCAPOCIHostNetwork,
+		"operatorNamespace", namespaces.OperatorNamespace,
+		"capiProviderNamespace", namespaces.CAPIProviderNamespace,
+		"capociProviderNamespace", namespaces.CAPOCIProviderNamespace,
+		"managedResourceNamespace", managedResourceNamespace,
+		"autoscalerNamespace", namespaces.AutoscalerNamespace,
+		"autoscalerDiscoveryNamespace", namespaces.AutoscalerDiscoveryNamespace,
 	)
 
 	// Validate the autoscaler spec
 	if err := validate(instance, r.AutoScalingConfig); err != nil {
 		logger.Error(err, "Invalid autoscaler spec")
+		message := fmt.Sprintf("Autoscaler policy rejected: %v", err)
+		instance.Status.Phase = PhaseBlocked
+		instance.Status.ObservedGeneration = instance.Generation
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionPolicyAccepted, metav1.ConditionFalse, ReasonPolicyRejected, message)
+		r.setReadyConditionFromFailedStage(instance)
+		if updateErr := r.Status().Update(ctx, instance); updateErr != nil {
+			logger.Error(updateErr, "Failed to update status after policy validation failure")
+			return ctrl.Result{}, stderrors.Join(err, fmt.Errorf("failed to update status after policy validation failure: %w", updateErr))
+		}
 		return ctrl.Result{}, err
 	}
+	r.setConditionAndRecord(instance, capiv1alpha1.ConditionPolicyAccepted, metav1.ConditionTrue, ReasonPolicyAccepted, "Autoscaler policy accepted")
 
 	// Step 1: Reconcile local prerequisites. Provider install and upgrade are
 	// handled outside the steady-state reconcile path, like CCM/CSI manifests.
-	capiComponent := capi.GetComponents(CAPISystemNamespace, CAPOCISystemNamespace, CAPIServiceAccountName, CAPOCIServiceAccountName, instance, useCAPOCIHostNetwork)
+	capiComponent := capi.GetComponents(namespaces.CAPIProviderNamespace, namespaces.CAPOCIProviderNamespace, CAPIServiceAccountName, CAPOCIServiceAccountName, instance, useCAPOCIHostNetwork)
 	err := reconcileComponents(ctx, r.Client, capiComponent)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile CAPI components")
+		message := fmt.Sprintf("Failed to reconcile CAPI provider prerequisites: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionProvidersReady, metav1.ConditionFalse, ReasonProviderPrerequisitesFailed, message)
 		return ctrl.Result{}, err
+	}
+	if !conditionIsTrue(instance, capiv1alpha1.ConditionProvidersReady) {
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionProvidersReady, metav1.ConditionUnknown, ReasonProviderPrerequisitesReady, "Provider prerequisites reconciled; checking provider controller rollout")
 	}
 	logger.Info("CAPI prerequisites reconciled")
 
 	// Step 2: Reconcile CAPOCI components
-	capociComponent := capoci.GetComponents(CAPOCISystemNamespace, instance, &r.CAPOCICredentials)
+	capociComponent := capoci.GetComponents(namespaces.CAPOCIProviderNamespace, instance, &r.CAPOCICredentials)
 	err = reconcileComponents(ctx, r.Client, capociComponent)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile CAPOCI components")
+		message := fmt.Sprintf("Failed to reconcile CAPOCI provider configuration: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionProvidersReady, metav1.ConditionFalse, ReasonProviderPrerequisitesFailed, message)
 		return ctrl.Result{RequeueAfter: time.Second * 20}, nil
 	}
 	logger.Info("CAPOCI configuration reconciled")
 
 	// Step 3: Check provider rollouts.
 	capiInstalled, err := r.checkCAPIInstallation(ctx, instance)
-	if err != nil && !errors.IsNotFound(err) {
+	if err != nil && !apierrors.IsNotFound(err) {
 		logger.Info("Provider controller managers not ready yet; requeuing", "reason", err.Error(), "requeueAfter", "20s")
+		instance.Status.CAPIInstalled = false
+		message := fmt.Sprintf("Provider controller managers are not ready: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionProvidersReady, metav1.ConditionUnknown, ReasonProviderRolloutPending, message)
 		return ctrl.Result{RequeueAfter: time.Second * 20}, nil
 	}
 	instance.Status.CAPIInstalled = capiInstalled
 
 	if !capiInstalled {
 		logger.Info("Provider controller managers are not installed, requeuing...")
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionProvidersReady, metav1.ConditionUnknown, ReasonProviderRolloutPending, "Provider controller managers are not installed yet")
 		return ctrl.Result{RequeueAfter: time.Second * 20}, nil
 	}
+	r.setConditionAndRecord(instance, capiv1alpha1.ConditionProvidersReady, metav1.ConditionTrue, ReasonProvidersReady, "CAPI and CAPOCI provider controller managers are available")
 	logger.Info("Provider controller managers are installed")
 
 	// Step 4: Reconcile Cluster Autoscaler components
-	autoscalerDeploymentValues := getAutoscalerDeploymentValues(instance)
+	autoscalerDeploymentValues := getAutoscalerDeploymentValues(instance, namespaces)
 
 	autoscalerComponents := autoscaler.GetComponents(&autoscalerDeploymentValues, instance, r.Scheme)
 
 	err = reconcileComponents(ctx, r.Client, autoscalerComponents)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile autoscaler components")
+		instance.Status.ClusterAutoscalerDeployed = false
+		message := fmt.Sprintf("Failed to reconcile autoscaler RBAC components: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionAutoscalerReady, metav1.ConditionFalse, ReasonAutoscalerRBACFailed, message)
 		return ctrl.Result{}, err
 	}
 	logger.Info("Autoscaler components created",
@@ -253,6 +301,9 @@ func (r *OCIClusterAutoscalerReconciler) reconcileOCICapiStack(ctx context.Conte
 	err = autoscaler.InstallAutoscaler(instance, &autoscalerDeploymentValues, r.RestConfig)
 	if err != nil {
 		logger.Error(err, "Failed to install autoscaler Helm chart")
+		instance.Status.ClusterAutoscalerDeployed = false
+		message := fmt.Sprintf("Failed to install or upgrade autoscaler Helm chart: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionAutoscalerReady, metav1.ConditionFalse, ReasonAutoscalerInstallFailed, message)
 		return ctrl.Result{}, err
 	}
 	logger.Info("Autoscaler Helm chart installed",
@@ -261,18 +312,35 @@ func (r *OCIClusterAutoscalerReconciler) reconcileOCICapiStack(ctx context.Conte
 		"version", autoscalerDeploymentValues.Version,
 		"namespace", autoscalerDeploymentValues.Namespace,
 	)
+	if err := r.checkDeploymentAvailable(ctx, autoscalerDeploymentValues.Namespace, autoscalerDeploymentValues.Name); err != nil {
+		logger.Info("cluster-autoscaler deployment is not available yet; requeuing", "reason", err.Error(), "requeueAfter", "20s")
+		instance.Status.ClusterAutoscalerDeployed = false
+		message := fmt.Sprintf("cluster-autoscaler deployment %s/%s is not available: %v", autoscalerDeploymentValues.Namespace, autoscalerDeploymentValues.Name, err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionAutoscalerReady, metav1.ConditionFalse, ReasonAutoscalerDeploymentUnavailable, message)
+		return ctrl.Result{RequeueAfter: time.Second * 20}, nil
+	}
 	instance.Status.ClusterAutoscalerDeployed = true
+	r.setConditionAndRecord(instance, capiv1alpha1.ConditionAutoscalerReady, metav1.ConditionTrue, ReasonAutoscalerReady, fmt.Sprintf("cluster-autoscaler deployment %s/%s is available", autoscalerDeploymentValues.Namespace, autoscalerDeploymentValues.Name))
 
 	// Step 5: Reconcile Enable Autoscaler components
-	clusterName, err := utils.GetClusterName(ctx, r.Client)
+	clusterName, err := clusterNameFor(ctx, r.Client, instance)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster name")
+		message := fmt.Sprintf("Failed to discover OpenShift cluster name for managed scaling resources: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionScalingResourcesReady, metav1.ConditionFalse, ReasonClusterDiscoveryFailed, message)
 		return ctrl.Result{}, err
+	}
+	if err := enableautoscaler.ValidateNodePoolName(enableautoscaler.NodePoolName(clusterName, instance)); err != nil {
+		message := fmt.Sprintf("Invalid generated autoscaler node pool name for cluster %q: %v", clusterName, err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionScalingResourcesReady, metav1.ConditionFalse, ReasonScalingConfigFailed, message)
+		return ctrl.Result{}, fmt.Errorf("invalid generated autoscaler node pool name: %w", err)
 	}
 
 	autoscalerConfig, err := enableautoscaler.SetAutoScalingConfig(ctx, r.Client, instance, r.AutoScalingConfig)
 	if err != nil {
 		logger.Error(err, "Failed to set autoscaler config")
+		message := fmt.Sprintf("Failed to resolve autoscaling configuration: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionScalingResourcesReady, metav1.ConditionFalse, ReasonScalingConfigFailed, message)
 		return ctrl.Result{}, err
 	}
 
@@ -303,11 +371,13 @@ func (r *OCIClusterAutoscalerReconciler) reconcileOCICapiStack(ctx context.Conte
 		"serviceNetworkCIDRConfigured", autoscalerConfig.NetworkConfig.ServiceNetworkCIDRBlock != "",
 	)
 
-	enableAutoscalerComponent := enableautoscaler.GetComponents(ctx, r.Client, CAPISystemNamespace, clusterName, CAPIServiceAccountName, instance, autoscalerConfig, r.CAPOCICredentials.UsesInstancePrincipal())
+	enableAutoscalerComponent := enableautoscaler.GetComponents(ctx, r.Client, managedResourceNamespace, namespaces.CAPIProviderNamespace, clusterName, CAPIServiceAccountName, instance, autoscalerConfig, r.CAPOCICredentials.UsesInstancePrincipal())
 
 	err = reconcileComponents(ctx, r.Client, enableAutoscalerComponent)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile Enable Autoscaler components")
+		message := fmt.Sprintf("Failed to reconcile managed scaling resources: %v", err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionScalingResourcesReady, metav1.ConditionFalse, ReasonScalingResourcesFailed, message)
 		return ctrl.Result{}, err
 	}
 	logger.Info("Enable Autoscaler components created",
@@ -315,30 +385,18 @@ func (r *OCIClusterAutoscalerReconciler) reconcileOCICapiStack(ctx context.Conte
 		"subcomponents", subcomponentNames(enableAutoscalerComponent),
 	)
 
-	if err := r.markExistingClusterControlPlaneInitialized(ctx, CAPISystemNamespace, clusterName); err != nil {
+	if err := r.markExistingClusterControlPlaneInitialized(ctx, managedResourceNamespace, clusterName); err != nil {
 		logger.Error(err, "Failed to mark existing CAPI cluster control plane initialized")
+		message := fmt.Sprintf("Failed to mark CAPI Cluster %q initialized: %v", clusterName, err)
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionScalingResourcesReady, metav1.ConditionFalse, ReasonScalingResourcesFailed, message)
 		return ctrl.Result{}, err
 	}
-
-	now := time.Now()
-	if skip, retryAfter, previousError := r.shouldSkipOrphanCleanup(now); skip {
-		logger.Info("Skipping orphan OCI instance cleanup because previous attempt failed",
-			"retryAfter", retryAfter.String(),
-			"previousError", previousError,
-		)
-	} else if err := r.cleanupOrphanOCIInstances(ctx, instance, autoscalerConfig, clusterName); err != nil {
-		r.recordOrphanCleanupFailure(now, err)
-		logger.Error(err, "Skipping orphan OCI instance cleanup because OCI client initialization or cleanup failed",
-			"retryAfter", orphanCleanupFailureRetry.String(),
-		)
-	} else {
-		r.recordOrphanCleanupSuccess()
-	}
+	r.setConditionAndRecord(instance, capiv1alpha1.ConditionScalingResourcesReady, metav1.ConditionTrue, ReasonScalingResourcesReady, fmt.Sprintf("Managed scaling resources for cluster %q are reconciled", clusterName))
 
 	// Debug: Fetch rendered OCIMachineTemplate to verify VNIC attachment state.
 	templateName := enableautoscaler.AutoscalingResourceName(clusterName, instance)
 	ocimt := &infrastructurev1beta2.OCIMachineTemplate{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: CAPISystemNamespace, Name: templateName}, ocimt); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: managedResourceNamespace, Name: templateName}, ocimt); err != nil {
 		logger.Info("OCIMachineTemplate not found yet (might be created asynchronously)", "name", templateName, "err", err)
 	} else {
 		s := ocimt.Spec.Template.Spec
@@ -359,19 +417,21 @@ func (r *OCIClusterAutoscalerReconciler) reconcileOCICapiStack(ctx context.Conte
 			"vnicAttachments", attachments,
 		)
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: kubeconfigSecretRefreshInterval}, nil
 }
 
 func (r *OCIClusterAutoscalerReconciler) cleanup(ctx context.Context, instance *capiv1alpha1.OCIClusterAutoscaler) error {
 	logger := log.FromContext(ctx)
 	logger.Info("Starting cleanup of all resources", "resource", instance.Name, "namespace", instance.Namespace)
-	autoscalerValues := getAutoscalerDeploymentValues(instance)
-	clusterName, err := utils.GetClusterName(ctx, r.Client)
+	namespaces := r.Namespaces()
+	managedResourceNamespace := managedResourceNamespaceFor(instance, namespaces)
+	autoscalerValues := getAutoscalerDeploymentValues(instance, namespaces)
+	clusterName, err := clusterNameFor(ctx, r.Client, instance)
 	if err != nil {
 		logger.Error(err, "Failed to get cluster name")
 		return err
 	}
-	autoscalerComponents := enableautoscaler.GetComponents(ctx, r.Client, CAPISystemNamespace, clusterName, CAPIServiceAccountName, instance, r.AutoScalingConfig, r.CAPOCICredentials.UsesInstancePrincipal())
+	autoscalerComponents := enableautoscaler.GetComponents(ctx, r.Client, managedResourceNamespace, namespaces.CAPIProviderNamespace, clusterName, CAPIServiceAccountName, instance, r.AutoScalingConfig, r.CAPOCICredentials.UsesInstancePrincipal())
 
 	err = removeComponent(ctx, r.Client, autoscalerComponents)
 	if err != nil {
@@ -379,6 +439,7 @@ func (r *OCIClusterAutoscalerReconciler) cleanup(ctx context.Context, instance *
 			logger.Info("Skipping enable autoscaler cleanup because API kinds are no longer registered", "error", err)
 		} else {
 			logger.Error(err, "Failed to remove enable autoscaler components")
+			r.setConditionAndRecord(instance, capiv1alpha1.ConditionCleanupSucceeded, metav1.ConditionFalse, ReasonCleanupFailed, fmt.Sprintf("Failed to remove managed scaling resources: %v", err))
 			return err
 		}
 	}
@@ -387,6 +448,7 @@ func (r *OCIClusterAutoscalerReconciler) cleanup(ctx context.Context, instance *
 	err = autoscaler.RemoveAutoscaler(&autoscalerValues, r.RestConfig)
 	if err != nil {
 		logger.Error(err, "Failed to remove autoscaler Helm chart")
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionCleanupSucceeded, metav1.ConditionFalse, ReasonCleanupFailed, fmt.Sprintf("Failed to remove autoscaler Helm release: %v", err))
 		return err
 	}
 	logger.Info("Autoscaler Helm chart removed")
@@ -395,6 +457,7 @@ func (r *OCIClusterAutoscalerReconciler) cleanup(ctx context.Context, instance *
 	err = removeComponent(ctx, r.Client, autoscalerRBAC)
 	if err != nil {
 		logger.Error(err, "Failed to remove autoscaler RBAC components")
+		r.setConditionAndRecord(instance, capiv1alpha1.ConditionCleanupSucceeded, metav1.ConditionFalse, ReasonCleanupFailed, fmt.Sprintf("Failed to remove autoscaler RBAC components: %v", err))
 		return err
 	}
 	logger.Info("Autoscaler RBAC components removed")
@@ -404,10 +467,11 @@ func (r *OCIClusterAutoscalerReconciler) cleanup(ctx context.Context, instance *
 }
 
 func (r *OCIClusterAutoscalerReconciler) checkCAPIInstallation(ctx context.Context, instance *capiv1alpha1.OCIClusterAutoscaler) (bool, error) {
-	if err := r.checkDeploymentAvailable(ctx, CAPISystemNamespace, CAPIDeploymentName); err != nil {
+	namespaces := r.Namespaces()
+	if err := r.checkDeploymentAvailable(ctx, namespaces.CAPIProviderNamespace, CAPIDeploymentName); err != nil {
 		return false, err
 	}
-	if err := r.checkDeploymentAvailable(ctx, CAPOCISystemNamespace, CAPOCIDeploymentName); err != nil {
+	if err := r.checkDeploymentAvailable(ctx, namespaces.CAPOCIProviderNamespace, CAPOCIDeploymentName); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -422,7 +486,7 @@ func (r *OCIClusterAutoscalerReconciler) checkDeploymentAvailable(ctx context.Co
 
 	condition := utils.GetDeploymentCondition(deployment.Status.Conditions, appsv1.DeploymentAvailable)
 	if condition == nil {
-		logger.Info("Provider controller manager deployment has no available condition",
+		logger.Info("Deployment has no available condition",
 			"deployment", deployment.Name,
 			"namespace", deployment.Namespace,
 			"replicas", deployment.Status.Replicas,
@@ -434,7 +498,7 @@ func (r *OCIClusterAutoscalerReconciler) checkDeploymentAvailable(ctx context.Co
 	}
 
 	if condition.Status != corev1.ConditionTrue {
-		logger.Info("Provider controller manager deployment is not available",
+		logger.Info("Deployment is not available",
 			"deployment", deployment.Name,
 			"namespace", deployment.Namespace,
 			"replicas", deployment.Status.Replicas,
@@ -447,7 +511,7 @@ func (r *OCIClusterAutoscalerReconciler) checkDeploymentAvailable(ctx context.Co
 		return fmt.Errorf("deployment %s/%s is not available: %s: %s", namespace, name, condition.Reason, condition.Message)
 	}
 
-	logger.V(1).Info("Provider controller manager deployment is available",
+	logger.V(1).Info("Deployment is available",
 		"deployment", deployment.Name,
 		"namespace", deployment.Namespace,
 		"replicas", deployment.Status.Replicas,
@@ -460,6 +524,26 @@ func (r *OCIClusterAutoscalerReconciler) checkDeploymentAvailable(ctx context.Co
 func validate(instance *capiv1alpha1.OCIClusterAutoscaler, config enableautoscaler.Config) error {
 	if err := enableautoscaler.ValidateMinMaxNodes(instance, config); err != nil {
 		return fmt.Errorf("invalid Min/Max nodes set in either the autoscaler spec or the config: %w", err)
+	}
+	if err := validateOptionalNamespace("spec.capi.namespace", instance.Spec.CAPI.Namespace); err != nil {
+		return err
+	}
+	if err := validateOptionalNamespace("spec.clusterAutoscaler.namespace", instance.Spec.ClusterAutoscaler.Namespace); err != nil {
+		return err
+	}
+	if err := validateOptionalObjectName("spec.capi.clusterName", instance.Spec.CAPI.ClusterName); err != nil {
+		return err
+	}
+	if err := validateOptionalObjectName("spec.clusterAutoscaler.name", instance.Spec.ClusterAutoscaler.Name); err != nil {
+		return err
+	}
+	if err := validateOptionalObjectName("spec.clusterAutoscaler.serviceAccountName", instance.Spec.ClusterAutoscaler.ServiceAccountName); err != nil {
+		return err
+	}
+	if clusterName := strings.TrimSpace(instance.Spec.CAPI.ClusterName); clusterName != "" {
+		if err := enableautoscaler.ValidateNodePoolName(enableautoscaler.NodePoolName(clusterName, instance)); err != nil {
+			return fmt.Errorf("spec.capi.clusterName/spec.autoscaling.poolIdentifier: %w", err)
+		}
 	}
 	return nil
 }
@@ -482,25 +566,41 @@ func (r *OCIClusterAutoscalerReconciler) isSingletonOwner(ctx context.Context, i
 }
 
 func (r *OCIClusterAutoscalerReconciler) singletonOwner(ctx context.Context, includeDeleting bool) (types.NamespacedName, bool, error) {
-	list := &capiv1alpha1.OCIClusterAutoscalerList{}
-	if err := r.List(ctx, list); err != nil {
-		return types.NamespacedName{}, false, err
-	}
+	return resolveSingletonOwnerName(ctx, r.Client, includeDeleting)
+}
 
-	items := make([]capiv1alpha1.OCIClusterAutoscaler, 0, len(list.Items))
-	for _, item := range list.Items {
+func resolveSingletonOwnerName(ctx context.Context, reader client.Reader, includeDeleting bool) (types.NamespacedName, bool, error) {
+	owner, found, err := resolveSingletonOwner(ctx, reader, includeDeleting)
+	if err != nil || !found {
+		return types.NamespacedName{}, found, err
+	}
+	return types.NamespacedName{Namespace: owner.Namespace, Name: owner.Name}, true, nil
+}
+
+func resolveSingletonOwner(ctx context.Context, reader client.Reader, includeDeleting bool) (capiv1alpha1.OCIClusterAutoscaler, bool, error) {
+	list := &capiv1alpha1.OCIClusterAutoscalerList{}
+	if err := reader.List(ctx, list); err != nil {
+		return capiv1alpha1.OCIClusterAutoscaler{}, false, err
+	}
+	owner, found := selectSingletonOwner(list.Items, includeDeleting)
+	return owner, found, nil
+}
+
+func selectSingletonOwner(items []capiv1alpha1.OCIClusterAutoscaler, includeDeleting bool) (capiv1alpha1.OCIClusterAutoscaler, bool) {
+	candidates := make([]capiv1alpha1.OCIClusterAutoscaler, 0, len(items))
+	for _, item := range items {
 		if !includeDeleting && !item.ObjectMeta.DeletionTimestamp.IsZero() {
 			continue
 		}
-		items = append(items, item)
+		candidates = append(candidates, item)
 	}
-	if len(items) == 0 {
-		return types.NamespacedName{}, false, nil
+	if len(candidates) == 0 {
+		return capiv1alpha1.OCIClusterAutoscaler{}, false
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		left := items[i]
-		right := items[j]
+	sort.Slice(candidates, func(i, j int) bool {
+		left := candidates[i]
+		right := candidates[j]
 		if !left.CreationTimestamp.Equal(&right.CreationTimestamp) {
 			return left.CreationTimestamp.Before(&right.CreationTimestamp)
 		}
@@ -510,11 +610,11 @@ func (r *OCIClusterAutoscalerReconciler) singletonOwner(ctx context.Context, inc
 		return left.Name < right.Name
 	})
 
-	return types.NamespacedName{Namespace: items[0].Namespace, Name: items[0].Name}, true, nil
+	return candidates[0], true
 }
 
 func (r *OCIClusterAutoscalerReconciler) requestsForOCIMachine(ctx context.Context, obj client.Object) []reconcile.Request {
-	if obj == nil || obj.GetNamespace() != CAPISystemNamespace {
+	if obj == nil {
 		return nil
 	}
 	owner, found, err := r.singletonOwner(ctx, false)
@@ -523,6 +623,15 @@ func (r *OCIClusterAutoscalerReconciler) requestsForOCIMachine(ctx context.Conte
 		return nil
 	}
 	if !found {
+		return nil
+	}
+
+	instance := &capiv1alpha1.OCIClusterAutoscaler{}
+	if err := r.Get(ctx, owner, instance); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to fetch OCIClusterAutoscaler while mapping OCIMachine event")
+		return nil
+	}
+	if obj.GetNamespace() != managedResourceNamespaceFor(instance, r.Namespaces()) {
 		return nil
 	}
 	return []reconcile.Request{{NamespacedName: owner}}
@@ -571,9 +680,24 @@ func reconcileComponents(ctx context.Context, client client.Client, components *
 }
 
 func (r *OCIClusterAutoscalerReconciler) markExistingClusterControlPlaneInitialized(ctx context.Context, namespace, clusterName string) error {
+	var lastNotFound error
+	for _, apiVersion := range []string{"cluster.x-k8s.io/v1beta2", "cluster.x-k8s.io/v1beta1"} {
+		if err := r.markExistingClusterControlPlaneInitializedForVersion(ctx, namespace, clusterName, apiVersion); err != nil {
+			if apierrors.IsNotFound(err) {
+				lastNotFound = err
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return lastNotFound
+}
+
+func (r *OCIClusterAutoscalerReconciler) markExistingClusterControlPlaneInitializedForVersion(ctx context.Context, namespace, clusterName, apiVersion string) error {
 	logger := log.FromContext(ctx).WithValues("cluster", clusterName, "namespace", namespace)
 	cluster := &unstructured.Unstructured{}
-	cluster.SetAPIVersion("cluster.x-k8s.io/v1beta2")
+	cluster.SetAPIVersion(apiVersion)
 	cluster.SetKind("Cluster")
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, cluster); err != nil {
 		return err
@@ -612,7 +736,7 @@ func (r *OCIClusterAutoscalerReconciler) markExistingClusterControlPlaneInitiali
 	if err := r.Status().Patch(ctx, cluster, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("failed to patch Cluster control plane initialization status: %w", err)
 	}
-	logger.Info("Marked existing CAPI cluster control plane initialized")
+	logger.Info("Marked existing CAPI cluster control plane initialized", "apiVersion", apiVersion)
 	return nil
 }
 
@@ -666,7 +790,7 @@ func reconcileClusterctlComponents(ctx context.Context, kubeClient client.Client
 		current.SetGroupVersionKind(desired.GroupVersionKind())
 
 		err := kubeClient.Get(ctx, client.ObjectKeyFromObject(desired), current)
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			if err := kubeClient.Create(ctx, desired); err != nil {
 				logger.Error(err, "Failed to create clusterctl component",
 					"kind", objectKind(desired),
@@ -882,8 +1006,17 @@ func preserveWebhookInjectedCABundles(desired, current *unstructured.Unstructure
 func removeComponent(ctx context.Context, client client.Client, component *components.Component) error {
 	logger := log.FromContext(ctx)
 	for _, subcomponent := range component.Subcomponents {
+		if _, ok := subcomponent.Object.(*corev1.Namespace); ok {
+			logger.Info("Skipping namespace deletion during component cleanup",
+				"parentComponent", component.Name,
+				"component", subcomponent.Name,
+				"kind", objectKind(subcomponent.Object),
+				"name", subcomponent.Object.GetName(),
+			)
+			continue
+		}
 		err := client.Delete(ctx, subcomponent.Object)
-		if err != nil && !errors.IsNotFound(err) {
+		if err != nil && !apierrors.IsNotFound(err) {
 			logger.Error(err, "Failed to delete component",
 				"parentComponent", component.Name,
 				"component", subcomponent.Name,
@@ -893,7 +1026,7 @@ func removeComponent(ctx context.Context, client client.Client, component *compo
 			)
 			return err
 		}
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			logger.V(1).Info("Component already absent during cleanup",
 				"parentComponent", component.Name,
 				"component", subcomponent.Name,
@@ -918,7 +1051,7 @@ func removeClusterctlComponents(ctx context.Context, client client.Client, compo
 	logger := log.FromContext(ctx)
 	for _, component := range components {
 		err := client.Delete(ctx, &component)
-		if err != nil && !errors.IsNotFound(err) {
+		if err != nil && !apierrors.IsNotFound(err) {
 			logger.Error(err, "Failed to delete clusterctl component",
 				"kind", objectKind(&component),
 				"name", component.GetName(),
@@ -926,7 +1059,7 @@ func removeClusterctlComponents(ctx context.Context, client client.Client, compo
 			)
 			return err
 		}
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			logger.V(1).Info("Clusterctl component already absent during cleanup",
 				"kind", objectKind(&component),
 				"name", component.GetName(),
@@ -946,18 +1079,44 @@ func removeClusterctlComponents(ctx context.Context, client client.Client, compo
 // getAutoscalerDeploymentValues first sets the default values and then calls the autoscaler.GetAutoscalerDeploymentValues
 // to determine if any values are overridden.
 // It returns the deployment values used for the autoscaler Helm chart.
-func getAutoscalerDeploymentValues(instance *capiv1alpha1.OCIClusterAutoscaler) autoscaler.AutoscalerDeploymentValues {
+func getAutoscalerDeploymentValues(instance *capiv1alpha1.OCIClusterAutoscaler, namespaces NamespaceConfig) autoscaler.AutoscalerDeploymentValues {
+	explicitAutoscalerDiscoveryNamespace := strings.TrimSpace(namespaces.AutoscalerDiscoveryNamespace)
+	namespaces = namespaces.WithDefaults()
+	autoscalerDiscoveryNamespace := explicitAutoscalerDiscoveryNamespace
+	if autoscalerDiscoveryNamespace == "" {
+		autoscalerDiscoveryNamespace = managedResourceNamespaceFor(instance, namespaces)
+	}
 	return autoscaler.GetAutoscalerDeploymentValues(autoscaler.AutoscalerDeploymentValues{
-		Name:                 AutoscalerDeploymentName,
-		Namespace:            CAPISystemNamespace,
-		CloudProvider:        AutoScalerCloudProvider,
-		ServiceAccountName:   AutoscalerDeploymentName,
-		RepositoryURL:        AutoscalerRepoURL,
-		Chart:                AutoscalerChartName,
-		Version:              "9.40.0",
-		CreateRBAC:           true,
-		CreateServiceAccount: true,
+		Name:                   AutoscalerDeploymentName,
+		Namespace:              namespaces.AutoscalerNamespace,
+		AutoDiscoveryNamespace: autoscalerDiscoveryNamespace,
+		CloudProvider:          AutoScalerCloudProvider,
+		ServiceAccountName:     AutoscalerDeploymentName,
+		RepositoryURL:          AutoscalerRepoURL,
+		Chart:                  AutoscalerChartName,
+		Version:                "9.40.0",
+		CreateRBAC:             true,
+		CreateServiceAccount:   true,
 	}, instance)
+}
+
+func clusterNameFor(ctx context.Context, reader client.Reader, instance *capiv1alpha1.OCIClusterAutoscaler) (string, error) {
+	if instance != nil {
+		if clusterName := strings.TrimSpace(instance.Spec.CAPI.ClusterName); clusterName != "" {
+			return clusterName, nil
+		}
+	}
+	return utils.GetClusterName(ctx, reader)
+}
+
+func managedResourceNamespaceFor(instance *capiv1alpha1.OCIClusterAutoscaler, namespaces NamespaceConfig) string {
+	namespaces = namespaces.WithDefaults()
+	if instance != nil {
+		if namespace := strings.TrimSpace(instance.Spec.CAPI.Namespace); namespace != "" {
+			return namespace
+		}
+	}
+	return namespaces.ManagedResourceNamespace
 }
 
 func subcomponentNames(component *components.Component) []string {

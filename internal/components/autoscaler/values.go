@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025, 2026 Oracle and/or its affiliates.
+Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 */
 
@@ -12,16 +12,17 @@ import (
 )
 
 type AutoscalerDeploymentValues struct {
-	CloudProvider        string
-	Name                 string
-	Namespace            string
-	ServiceAccountName   string
-	CreateRBAC           bool
-	CreateServiceAccount bool
-	RepositoryURL        string
-	Chart                string
-	Version              string
-	ScanInterval         string
+	CloudProvider          string
+	Name                   string
+	Namespace              string
+	AutoDiscoveryNamespace string
+	ServiceAccountName     string
+	CreateRBAC             bool
+	CreateServiceAccount   bool
+	RepositoryURL          string
+	Chart                  string
+	Version                string
+	ScanInterval           string
 }
 
 var valuesFmt = `
@@ -47,11 +48,15 @@ func GetValuesString(values *AutoscalerDeploymentValues) string {
 	if scanInterval == "" {
 		scanInterval = defaultScanInterval
 	}
+	autoDiscoveryNamespace := values.AutoDiscoveryNamespace
+	if autoDiscoveryNamespace == "" {
+		autoDiscoveryNamespace = values.Namespace
+	}
 
 	return fmt.Sprintf(valuesFmt,
 		values.CloudProvider,
 		values.Name,
-		values.Namespace,
+		autoDiscoveryNamespace,
 		scanInterval,
 		values.CreateRBAC,
 		values.CreateServiceAccount,
@@ -73,11 +78,11 @@ func GetAutoscalerDeploymentValues(originalValues AutoscalerDeploymentValues, in
 	if instance.Spec.ClusterAutoscaler.ServiceAccountName != "" {
 		originalValues.ServiceAccountName = instance.Spec.ClusterAutoscaler.ServiceAccountName
 	}
-	if instance.Spec.ClusterAutoscaler.CreateRBAC {
-		originalValues.CreateRBAC = true
+	if instance.Spec.ClusterAutoscaler.CreateRBAC != nil {
+		originalValues.CreateRBAC = *instance.Spec.ClusterAutoscaler.CreateRBAC
 	}
-	if instance.Spec.ClusterAutoscaler.CreateServiceAccount {
-		originalValues.CreateServiceAccount = true
+	if instance.Spec.ClusterAutoscaler.CreateServiceAccount != nil {
+		originalValues.CreateServiceAccount = *instance.Spec.ClusterAutoscaler.CreateServiceAccount
 	}
 	if instance.Spec.ClusterAutoscaler.RepositoryURL != "" {
 		originalValues.RepositoryURL = instance.Spec.ClusterAutoscaler.RepositoryURL

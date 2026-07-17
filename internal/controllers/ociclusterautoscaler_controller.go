@@ -786,6 +786,14 @@ func reconcileClusterctlComponents(ctx context.Context, kubeClient client.Client
 	logger := log.FromContext(ctx)
 	for i := range components {
 		desired := components[i].DeepCopy()
+		if err := setDeploymentRolloutDefaults(desired); err != nil {
+			logger.Error(err, "Failed to set clusterctl deployment rollout defaults",
+				"kind", objectKind(desired),
+				"name", desired.GetName(),
+				"namespace", objectNamespace(desired),
+			)
+			return err
+		}
 		current := &unstructured.Unstructured{}
 		current.SetGroupVersionKind(desired.GroupVersionKind())
 
@@ -827,6 +835,29 @@ func reconcileClusterctlComponents(ctx context.Context, kubeClient client.Client
 			return err
 		}
 		logComponentOperation(logger, "Reconciled clusterctl component", "clusterctl", reconciled.GetName(), reconciled, string(controllerutil.OperationResultUpdated))
+	}
+	return nil
+}
+
+func setDeploymentRolloutDefaults(desired *unstructured.Unstructured) error {
+	gvk := desired.GroupVersionKind()
+	if gvk.Group != "apps" || gvk.Kind != "Deployment" {
+		return nil
+	}
+	if _, found, err := unstructured.NestedMap(desired.Object, "spec", "strategy"); err != nil || found {
+		if err != nil {
+			return fmt.Errorf("failed to read Deployment strategy: %w", err)
+		}
+		return nil
+	}
+	if err := unstructured.SetNestedMap(desired.Object, map[string]interface{}{
+		"type": "RollingUpdate",
+		"rollingUpdate": map[string]interface{}{
+			"maxSurge":       int64(1),
+			"maxUnavailable": int64(0),
+		},
+	}, "spec", "strategy"); err != nil {
+		return fmt.Errorf("failed to set Deployment rollout defaults: %w", err)
 	}
 	return nil
 }

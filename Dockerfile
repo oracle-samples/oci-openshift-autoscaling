@@ -5,6 +5,7 @@
 # Use the native build platform for the builder stage to avoid emulation-related
 # crashes (seen as SIGSEGV in `go mod download` on Apple Silicon when targeting
 # linux/amd64).
+ARG OEL_BASE_IMAGE=container-registry.oracle.com/os/oraclelinux:7-slim
 FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG BUILDPLATFORM
 ARG TARGETPLATFORM
@@ -22,6 +23,7 @@ COPY cmd/ cmd/
 COPY api/ api/
 COPY config/ config/
 COPY internal/ internal/
+COPY LICENSE.txt THIRD_PARTY_LICENSES.txt ./
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
@@ -34,15 +36,25 @@ ARG CAPOCI_VERSION
 COPY clusterctl.yaml clusterctl.yaml
 RUN sed -i.bak "s/CAPOCI_VERSION_PLACEHOLDER/${CAPOCI_VERSION}/g" clusterctl.yaml && rm -f clusterctl.yaml.bak
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+RUN mkdir -p /workspace/licenses && cp LICENSE.txt THIRD_PARTY_LICENSES.txt /workspace/licenses/
+
+# Use Oracle Linux 7 as the runtime base image.
+FROM ${OEL_BASE_IMAGE}
+ARG VERSION=0.0.0
+ARG RELEASE=1
+LABEL name="oci-capi-autoscaling-operator" \
+      maintainer="Oracle" \
+      vendor="Oracle" \
+      version="${VERSION}" \
+      release="${RELEASE}" \
+      summary="OCI OpenShift autoscaling operator" \
+      description="Operator that manages Cluster API based autoscaling for OpenShift clusters running on Oracle Cloud Infrastructure."
 WORKDIR /
-COPY --from=builder /workspace/manager .
+RUN mkdir -p /.config /licenses && chown -R 65532:65532 /.config /licenses
+COPY --from=builder /workspace/manager /manager
 # The following is needed for clusterctl to generate component configs during runtime
 COPY --from=builder --chown=65532:65532 /workspace/clusterctl.yaml /.config/clusterctl.yaml
-COPY LICENSE.txt /licenses/LICENSE.txt
-COPY THIRD_PARTY_LICENSES.txt /licenses/THIRD_PARTY_LICENSES.txt
+COPY --from=builder --chown=65532:65532 /workspace/licenses/ /licenses/
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

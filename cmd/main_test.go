@@ -225,6 +225,38 @@ func TestResolveCSRApprovalConfig(t *testing.T) {
 	}
 }
 
+func TestSetProviderCRDWebhookNamespace(t *testing.T) {
+	t.Parallel()
+
+	crds := []unstructured.Unstructured{
+		*testCRD("clusters.cluster.x-k8s.io", map[string]interface{}{
+			"conversion": webhookConversion("capi-system", "capi-webhook-service"),
+		}),
+		*testCRD("plain.example.com", map[string]interface{}{
+			"conversion": map[string]interface{}{
+				"strategy": "None",
+			},
+		}),
+	}
+
+	if err := setProviderCRDWebhookNamespace(crds, "oci-openshift-autoscaling-operator"); err != nil {
+		t.Fatalf("setProviderCRDWebhookNamespace() error = %v", err)
+	}
+
+	namespace, found, err := unstructured.NestedString(crds[0].Object, "spec", "conversion", "webhook", "clientConfig", "service", "namespace")
+	if err != nil || !found || namespace != "oci-openshift-autoscaling-operator" {
+		t.Fatalf("webhook namespace = %q found=%v err=%v, want oci-openshift-autoscaling-operator", namespace, found, err)
+	}
+	serviceName, found, err := unstructured.NestedString(crds[0].Object, "spec", "conversion", "webhook", "clientConfig", "service", "name")
+	if err != nil || !found || serviceName != "capi-webhook-service" {
+		t.Fatalf("webhook service name = %q found=%v err=%v, want capi-webhook-service", serviceName, found, err)
+	}
+	_, found, err = unstructured.NestedString(crds[1].Object, "spec", "conversion", "webhook", "clientConfig", "service", "namespace")
+	if err != nil || found {
+		t.Fatalf("plain CRD webhook namespace found=%v err=%v, want absent", found, err)
+	}
+}
+
 func TestApplyProviderCRDPatchesMutableFieldsOnly(t *testing.T) {
 	t.Parallel()
 
@@ -330,6 +362,72 @@ func TestApplyProviderCRDPatchesMutableFieldsOnly(t *testing.T) {
 	}
 }
 
+func TestApplyProviderCRDPatchesConversionWebhookNamespace(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add apiextensions scheme: %v", err)
+	}
+
+	existing := testCRD("clusters.cluster.x-k8s.io", map[string]interface{}{
+		"group": "cluster.x-k8s.io",
+		"names": map[string]interface{}{
+			"kind":   "Cluster",
+			"plural": "clusters",
+		},
+		"scope": "Namespaced",
+		"versions": []interface{}{
+			map[string]interface{}{
+				"name":    "v1beta2",
+				"served":  true,
+				"storage": true,
+				"schema": map[string]interface{}{
+					"openAPIV3Schema": map[string]interface{}{"type": "object"},
+				},
+			},
+		},
+		"conversion": webhookConversion("capi-system", "capi-webhook-service"),
+	})
+	desired := testCRD("clusters.cluster.x-k8s.io", map[string]interface{}{
+		"group": "cluster.x-k8s.io",
+		"names": map[string]interface{}{
+			"kind":   "Cluster",
+			"plural": "clusters",
+		},
+		"scope": "Namespaced",
+		"versions": []interface{}{
+			map[string]interface{}{
+				"name":    "v1beta2",
+				"served":  true,
+				"storage": true,
+				"schema": map[string]interface{}{
+					"openAPIV3Schema": map[string]interface{}{"type": "object"},
+				},
+			},
+		},
+		"conversion": webhookConversion("oci-openshift-autoscaling-operator", "capi-webhook-service"),
+	})
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	applied, err := applyProviderCRD(context.Background(), k8sClient, desired)
+	if err != nil {
+		t.Fatalf("applyProviderCRD() error = %v", err)
+	}
+	if applied != "updated" {
+		t.Fatalf("applyProviderCRD() = %q, want updated", applied)
+	}
+
+	got := testCRD("clusters.cluster.x-k8s.io", nil)
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "clusters.cluster.x-k8s.io"}, got); err != nil {
+		t.Fatalf("get CRD: %v", err)
+	}
+	namespace, found, err := unstructured.NestedString(got.Object, "spec", "conversion", "webhook", "clientConfig", "service", "namespace")
+	if err != nil || !found || namespace != "oci-openshift-autoscaling-operator" {
+		t.Fatalf("webhook namespace = %q found=%v err=%v, want oci-openshift-autoscaling-operator", namespace, found, err)
+	}
+}
+
 func testCRD(name string, spec map[string]interface{}) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -344,4 +442,18 @@ func testCRD(name string, spec map[string]interface{}) *unstructured.Unstructure
 		obj.Object["spec"] = spec
 	}
 	return obj
+}
+
+func webhookConversion(namespace, serviceName string) map[string]interface{} {
+	return map[string]interface{}{
+		"strategy": "Webhook",
+		"webhook": map[string]interface{}{
+			"clientConfig": map[string]interface{}{
+				"service": map[string]interface{}{
+					"name":      serviceName,
+					"namespace": namespace,
+				},
+			},
+		},
+	}
 }

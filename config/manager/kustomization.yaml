@@ -10,3 +10,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling
+  newTag: v1.0.0

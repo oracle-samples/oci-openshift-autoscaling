@@ -36,21 +36,6 @@ rules:
   verbs:
   - create
 - apiGroups:
-  - addons.cluster.x-k8s.io
-  - bootstrap.cluster.x-k8s.io
-  - controlplane.cluster.x-k8s.io
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - '*'
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - admissionregistration.k8s.io
   resources:
   - mutatingwebhookconfigurations
@@ -70,6 +55,7 @@ rules:
   verbs:
   - create
   - get
+  - patch
   - update
 - apiGroups:
   - apps
@@ -124,15 +110,6 @@ rules:
 - apiGroups:
   - cluster.x-k8s.io
   resources:
-  - '*/finalizers'
-  - '*/status'
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - cluster.x-k8s.io
-  resources:
   - clusterclasses
   - clusters
   - clusters/finalizers
@@ -167,13 +144,24 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
-  - ocicluster/status
-  - ocimachines
+  - ociclusteridentities
+  - ociclusters
+  - ocimachinetemplates
   verbs:
+  - create
+  - delete
   - get
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - ocimachines
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - ipam.cluster.x-k8s.io

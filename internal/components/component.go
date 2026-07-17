@@ -11,6 +11,7 @@ import (
 )
 
 type Component struct {
+	InstanceName  string
 	Name          string
 	Subcomponents SubcomponentList
 }

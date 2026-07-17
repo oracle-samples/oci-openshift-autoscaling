@@ -53,7 +53,7 @@ func GetClusterctlComponents(ctx context.Context, deploymentName string, service
 	reconcileComponents := []unstructured.Unstructured{}
 
 	for _, component := range components {
-		utils.SetDefaultLabels(&component, autoscaler.Name)
+		utils.SetComponentLabels(&component, autoscaler.Name, componentNameCAPI, component.GetKind())
 		switch component.GetKind() {
 		case kindService:
 			utils.SetOpenshiftServiceCertAnnotation(&component, webhookServiceName)
@@ -66,7 +66,7 @@ func GetClusterctlComponents(ctx context.Context, deploymentName string, service
 			component.SetName(deploymentName)
 			reconcileComponents = append(reconcileComponents, component)
 		case kindServiceAccount:
-			utils.SetDefaultLabels(&component, autoscaler.Name)
+			utils.SetComponentLabels(&component, autoscaler.Name, componentNameCAPI, component.GetKind())
 			component.SetName(serviceAccountName)
 			reconcileComponents = append(reconcileComponents, component)
 		case kindCertificate, kindIssuer, kindNamespace, kindSecret, kindCustomResourceDefinition: // skip these
@@ -93,7 +93,8 @@ func GetComponents(capiSystemNamespace, capociSystemNamespace, capiServiceAccoun
 	namespace, namespaceMutateFn := CAPINamespace(capiSystemNamespace, instance)
 
 	return &components.Component{
-		Name: componentNameCAPI,
+		InstanceName: instance.Name,
+		Name:         componentNameCAPI,
 		Subcomponents: components.SubcomponentList{
 			{Name: "capiSCC", Object: capiSCC, MutateFn: capiSCCMutateFn},
 			{Name: "capociSCC", Object: capociSCC, MutateFn: capociSCCMutateFn},

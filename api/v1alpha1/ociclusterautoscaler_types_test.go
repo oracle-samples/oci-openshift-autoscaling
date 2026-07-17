@@ -176,6 +176,25 @@ var _ = Describe("OCIClusterAutoscaler CRD", func() {
 		Expect(err.Error()).To(ContainSubstring("spec.autoscaling.maxNodes"))
 	})
 
+	It("should validate min node count does not exceed max node count", func() {
+		autoscaler := &OCIClusterAutoscaler{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-autoscaler-invalid-range",
+				Namespace: namespace,
+			},
+			Spec: OCIClusterAutoscalerSpec{
+				Autoscaling: AutoscalingConfig{
+					MinNodes: ptr.To[int32](5),
+					MaxNodes: ptr.To[int32](3),
+				},
+			},
+		}
+
+		err := k8sClient.Create(ctx, autoscaler)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("minNodes must be less than or equal to maxNodes"))
+	})
+
 	It("should validate flexible shape CPU and memory", func() {
 		invalidCPU := &unstructured.Unstructured{
 			Object: map[string]any{

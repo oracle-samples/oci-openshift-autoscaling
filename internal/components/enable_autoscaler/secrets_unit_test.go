@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	ocicapioperatorv1alpha1 "github.com/openshift/oci-capi-operator/api/v1alpha1"
+	"github.com/openshift/oci-capi-operator/internal/utils"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -116,6 +117,12 @@ func TestKubeConfigSecretUsesTokenRequest(t *testing.T) {
 	}
 	if got := secret.Labels["cluster.x-k8s.io/cluster-name"]; got != "test-cluster" {
 		t.Fatalf("unexpected cluster-name label: %q", got)
+	}
+	if got := secret.Labels[utils.ManagedByLabel]; got != "test-autoscaler" {
+		t.Fatalf("unexpected managed-by label: %q", got)
+	}
+	if got := secret.Labels[utils.AppInstanceLabel]; got != "test-autoscaler" {
+		t.Fatalf("unexpected app instance label: %q", got)
 	}
 	if _, ok := secret.Labels["clusterctl.cluster.x-k8s.io/move"]; !ok {
 		t.Fatalf("expected clusterctl move label to be set")

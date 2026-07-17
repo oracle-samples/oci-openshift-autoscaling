@@ -139,7 +139,7 @@ func GetClusterctlComponents(ctx context.Context, deploymentName string, service
 	logger.Info("Fetched CAPOCI clusterctl components", "count", len(components), "version", capociProviderVersion)
 	reconcileComponents := []unstructured.Unstructured{}
 	for _, component := range components {
-		utils.SetDefaultLabels(&component, autoscaler.Name)
+		utils.SetComponentLabels(&component, autoscaler.Name, componentNameCAPOCI, component.GetKind())
 		switch component.GetKind() {
 		case kindService:
 			utils.SetOpenshiftServiceCertAnnotation(&component, webhookServiceName)
@@ -243,7 +243,8 @@ func GetComponents(capociNamespace string, instance *capiv1alpha1.OCIClusterAuto
 	namespace, namespaceMutateFn := Namespace(capociNamespace, instance)
 	authConfigSecret, authConfigSecretMutateFn := AuthConfigSecret(instance, capociNamespace, auth)
 	return &components.Component{
-		Name: componentNameCAPOCI,
+		InstanceName: instance.Name,
+		Name:         componentNameCAPOCI,
 		Subcomponents: components.SubcomponentList{
 			{Name: "namespace", Object: namespace, MutateFn: namespaceMutateFn},
 			{Name: "authConfigSecret", Object: authConfigSecret, MutateFn: authConfigSecretMutateFn},

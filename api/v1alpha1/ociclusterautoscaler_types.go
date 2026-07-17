@@ -36,6 +36,7 @@ type OCIClusterAutoscalerSpec struct {
 }
 
 // AutoscalingConfig contains optional autoscaling configuration
+// +kubebuilder:validation:XValidation:rule="!has(self.minNodes) || !has(self.maxNodes) || self.minNodes <= self.maxNodes",message="minNodes must be less than or equal to maxNodes"
 type AutoscalingConfig struct {
 	// minNodes is the minimum number of nodes in the autoscaling group
 	// +kubebuilder:validation:Minimum=0

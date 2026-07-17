@@ -116,7 +116,7 @@ func validateDNS1123Label(field, value string) error {
 
 func machineTemplateLabels(instanceName, clusterName, nodePoolName string) map[string]interface{} {
 	labels := map[string]interface{}{}
-	for key, value := range utils.GetDefaultLabels(instanceName) {
+	for key, value := range utils.GetComponentLabels(instanceName, "EnableAutoscaler", "machine") {
 		labels[key] = value
 	}
 	labels[capiClusterNameLabel] = clusterName
@@ -477,6 +477,7 @@ func OCIMachineTemplate(capiSystemNamespace, clusterName string, instance *ocica
 		if err := validateGeneratedNodePoolNames(clusterName, instance); err != nil {
 			return err
 		}
+		utils.SetComponentLabels(machineTemplate, instance.Name, "EnableAutoscaler", "machineTemplate")
 
 		shape := config.AutoScalingConfig.Shape
 
@@ -678,20 +679,13 @@ func MachineDeployment(capiSystemNamespace, clusterName string, instance *ocicap
 				"replicas": int64(config.AutoScalingConfig.MinNodes),
 			}
 		} else {
-			replicas, found, err := unstructured.NestedInt64(spec, "replicas")
+			_, found, err := unstructured.NestedInt64(spec, "replicas")
 			if err != nil {
 				return fmt.Errorf("failed to read existing MachineDeployment spec.replicas: %w", err)
 			}
 			if !found {
-				replicas = int64(config.AutoScalingConfig.MinNodes)
+				spec["replicas"] = int64(config.AutoScalingConfig.MinNodes)
 			}
-			if replicas < int64(config.AutoScalingConfig.MinNodes) {
-				replicas = int64(config.AutoScalingConfig.MinNodes)
-			}
-			if replicas > int64(config.AutoScalingConfig.MaxNodes) {
-				replicas = int64(config.AutoScalingConfig.MaxNodes)
-			}
-			spec["replicas"] = replicas
 		}
 		machineLabels := map[string]interface{}{
 			capiClusterNameLabel:    clusterName,

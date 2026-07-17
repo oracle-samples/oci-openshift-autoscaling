@@ -658,7 +658,19 @@ func reconcileComponents(ctx context.Context, client client.Client, components *
 	allErrs := []error{}
 	logger := log.FromContext(ctx)
 	for _, component := range components.Subcomponents {
-		op, err := controllerutil.CreateOrPatch(ctx, client, component.Object, component.MutateFn)
+		mutateFn := func() error {
+			if component.MutateFn != nil {
+				if err := component.MutateFn(); err != nil {
+					return err
+				}
+			}
+			instanceName := components.InstanceName
+			if instanceName == "" {
+				return fmt.Errorf("component %s/%s has no instance metadata", components.Name, component.Name)
+			}
+			return utils.SetComponentLabels(component.Object, instanceName, components.Name, component.Name)
+		}
+		op, err := controllerutil.CreateOrPatch(ctx, client, component.Object, mutateFn)
 		if err != nil {
 			logger.Error(err, "Failed to reconcile component",
 				"parentComponent", components.Name,

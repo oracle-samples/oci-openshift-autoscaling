@@ -90,6 +90,10 @@ spec:
                         type: integer
                     type: object
                 type: object
+                x-kubernetes-validations:
+                - message: minNodes must be less than or equal to maxNodes
+                  rule: '!has(self.minNodes) || !has(self.maxNodes) || self.minNodes
+                    <= self.maxNodes'
               capi:
                 description: CAPI deployment configuration
                 properties:

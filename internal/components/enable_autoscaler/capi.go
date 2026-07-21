@@ -128,7 +128,7 @@ func bootstrapSecretName(clusterName string) string {
 	return fmt.Sprintf(bootstrapSecretNameFormat, clusterName)
 }
 
-func infrastructureRef(apiVersion, kind, namespace, name string) (map[string]interface{}, error) {
+func infrastructureRef(apiVersion, kind, _ string, name string) (map[string]interface{}, error) {
 	groupVersion, err := schema.ParseGroupVersion(strings.TrimSpace(apiVersion))
 	if err != nil {
 		return nil, fmt.Errorf("invalid infrastructure apiVersion %q: %w", apiVersion, err)
@@ -143,12 +143,9 @@ func infrastructureRef(apiVersion, kind, namespace, name string) (map[string]int
 		return nil, fmt.Errorf("infrastructureRef name must not be empty")
 	}
 	ref := map[string]interface{}{
-		"apiVersion": groupVersion.String(),
-		"kind":       kind,
-		"name":       name,
-	}
-	if namespace := strings.TrimSpace(namespace); namespace != "" {
-		ref["namespace"] = namespace
+		"apiGroup": groupVersion.Group,
+		"kind":     kind,
+		"name":     name,
 	}
 	return ref, nil
 }
@@ -161,7 +158,7 @@ func validateCAPIInfrastructureRef(obj *unstructured.Unstructured, path ...strin
 	if !found {
 		return fmt.Errorf("infrastructureRef is required")
 	}
-	for _, field := range []string{"apiVersion", "kind", "name"} {
+	for _, field := range []string{"apiGroup", "kind", "name"} {
 		value, ok := ref[field].(string)
 		if !ok || strings.TrimSpace(value) == "" {
 			return fmt.Errorf("infrastructureRef.%s must not be empty", field)

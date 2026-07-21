@@ -165,14 +165,13 @@ var _ = Describe("CAPI Components", func() {
 	})
 
 	Context("CAPICluster", func() {
-		It("should build infrastructure refs with apiVersion for Cluster API v1beta2", func() {
+		It("should build infrastructure refs with apiGroup for Cluster API v1beta2", func() {
 			ref, err := infrastructureRef(ociInfrastructureAPIVersion, ociClusterKind, "test-namespace", "test-cluster")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ref).To(Equal(map[string]interface{}{
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2",
-				"kind":       "OCICluster",
-				"namespace":  "test-namespace",
-				"name":       "test-cluster",
+				"apiGroup": "infrastructure.cluster.x-k8s.io",
+				"kind":     "OCICluster",
+				"name":     "test-cluster",
 			}))
 		})
 
@@ -221,15 +220,14 @@ var _ = Describe("CAPI Components", func() {
 			Expect(found).To(BeTrue())
 			Expect(infraRefName).To(Equal("test-cluster"))
 
-			infraRefAPIVersion, found, err := unstructured.NestedString(cluster.Object, "spec", "infrastructureRef", "apiVersion")
+			infraRefAPIGroup, found, err := unstructured.NestedString(cluster.Object, "spec", "infrastructureRef", "apiGroup")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(infraRefAPIVersion).To(Equal("infrastructure.cluster.x-k8s.io/v1beta2"))
+			Expect(infraRefAPIGroup).To(Equal("infrastructure.cluster.x-k8s.io"))
 
-			infraRefNamespace, found, err := unstructured.NestedString(cluster.Object, "spec", "infrastructureRef", "namespace")
+			_, found, err = unstructured.NestedString(cluster.Object, "spec", "infrastructureRef", "namespace")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue())
-			Expect(infraRefNamespace).To(Equal("oci-openshift-autoscaling-operator"))
+			Expect(found).To(BeFalse())
 		})
 
 		It("should reject invalid infrastructure apiVersions early", func() {
@@ -580,15 +578,14 @@ var _ = Describe("CAPI Components", func() {
 			Expect(found).To(BeTrue())
 			Expect(infraRefName).To(Equal("test-cluster-autoscaling"))
 
-			infraRefAPIVersion, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "infrastructureRef", "apiVersion")
+			infraRefAPIGroup, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "infrastructureRef", "apiGroup")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(infraRefAPIVersion).To(Equal("infrastructure.cluster.x-k8s.io/v1beta2"))
+			Expect(infraRefAPIGroup).To(Equal("infrastructure.cluster.x-k8s.io"))
 
-			infraRefNamespace, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "infrastructureRef", "namespace")
+			_, found, err = unstructured.NestedString(deployment.Object, "spec", "template", "spec", "infrastructureRef", "namespace")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue())
-			Expect(infraRefNamespace).To(Equal("oci-openshift-autoscaling-operator"))
+			Expect(found).To(BeFalse())
 
 			_, found, err = unstructured.NestedMap(deployment.Object, "spec", "rollout")
 			Expect(err).NotTo(HaveOccurred())

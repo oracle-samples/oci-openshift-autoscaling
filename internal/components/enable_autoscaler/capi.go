@@ -39,7 +39,7 @@ const (
 
 const (
 	skipAPIServerLBManagementAnnotation = "cluster.x-k8s.io/skip-apiserver-lb-management"
-	capiClusterAPIVersion               = "cluster.x-k8s.io/v1beta1"
+	capiClusterAPIVersion               = "cluster.x-k8s.io/v1beta2"
 	ociInfrastructureAPIVersion         = "infrastructure.cluster.x-k8s.io/v1beta2"
 	ociClusterIdentityKind              = "OCIClusterIdentity"
 	ociClusterKind                      = "OCICluster"

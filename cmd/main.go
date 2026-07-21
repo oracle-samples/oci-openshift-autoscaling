@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -107,13 +108,28 @@ type CSRApprovalConfig struct {
 	ClusterName      string `envconfig:"CSR_CLUSTER_NAME" default:""`
 }
 
-const defaultCSRMachineNamespace = controllers.DefaultManagedResourceNamespace
+const (
+	defaultCSRMachineNamespace         = controllers.DefaultManagedResourceNamespace
+	defaultLeaderElectionLeaseDuration = 15 * time.Second
+	defaultLeaderElectionRenewDeadline = 10 * time.Second
+	defaultLeaderElectionRetryPeriod   = 2 * time.Second
+)
 
 type RunOptions struct {
 	EnableLeaderElection bool
 	MetricsAddr          string
 	ProbeAddr            string
 	EnableHTTP2          bool
+}
+
+func applyLeaderElectionTiming(options *ctrl.Options) {
+	leaseDuration := defaultLeaderElectionLeaseDuration
+	renewDeadline := defaultLeaderElectionRenewDeadline
+	retryPeriod := defaultLeaderElectionRetryPeriod
+	options.LeaseDuration = &leaseDuration
+	options.RenewDeadline = &renewDeadline
+	options.RetryPeriod = &retryPeriod
+	options.LeaderElectionReleaseOnCancel = true
 }
 
 func run(ctx context.Context, options Options, setupLog *logr.Logger) error {
@@ -145,6 +161,9 @@ func run(ctx context.Context, options Options, setupLog *logr.Logger) error {
 		HealthProbeBindAddress: options.RunOptions.ProbeAddr,
 		LeaderElection:         options.RunOptions.EnableLeaderElection,
 		LeaderElectionID:       "1af242a3.openshift.io",
+	}
+	if mgrOpts.LeaderElection {
+		applyLeaderElectionTiming(&mgrOpts)
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOpts)
@@ -299,9 +318,9 @@ func NewRunCommand() *cobra.Command {
 	options := Options{}
 	runCmd.Flags().StringVar(&options.RunOptions.MetricsAddr, "metrics-bind-address", ":8080", "The address the metrics endpoint binds to.")
 	runCmd.Flags().StringVar(&options.RunOptions.ProbeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	runCmd.Flags().BoolVar(&options.RunOptions.EnableLeaderElection, "leader-elect", false,
+	runCmd.Flags().BoolVar(&options.RunOptions.EnableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
+			"Disable only for local development with --leader-elect=false.")
 	runCmd.Flags().BoolVar(&options.RunOptions.EnableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the webhook servers")
 

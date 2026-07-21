@@ -52,8 +52,15 @@ var _ = Describe("Autoscaler RBAC", func() {
 			Expect(clusterRole.Rules).To(HaveLen(1))
 			rule := clusterRole.Rules[0]
 			Expect(rule.APIGroups).To(ConsistOf("infrastructure.cluster.x-k8s.io"))
-			Expect(rule.Resources).To(ConsistOf("*"))
-			Expect(rule.Verbs).To(ConsistOf("get", "list", "watch", "update"))
+			Expect(rule.Resources).To(ConsistOf(
+				"ociclusters",
+				"ociclusteridentities",
+				"ocimachinetemplates",
+				"ocimachines",
+			))
+			Expect(rule.Resources).NotTo(ContainElement("*"))
+			Expect(rule.Verbs).To(ConsistOf("get", "list", "watch"))
+			Expect(rule.Verbs).NotTo(ContainElement("update"))
 
 			// Verify labels
 			expectedLabels := utils.GetDefaultLabels(instance.Name)

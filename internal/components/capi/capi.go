@@ -25,21 +25,22 @@ import (
 )
 
 const (
-	componentNameCAPI                  = "CAPI"
-	clusterAPIProviderName             = "cluster-api"
-	kindService                        = "Service"
-	kindDeployment                     = "Deployment"
-	kindServiceAccount                 = "ServiceAccount"
-	kindCertificate                    = "Certificate"
-	kindIssuer                         = "Issuer"
-	kindNamespace                      = "Namespace"
-	kindSecret                         = "Secret"
-	kindCustomResourceDefinition       = "CustomResourceDefinition"
-	kindValidatingWebhookConfiguration = "ValidatingWebhookConfiguration"
-	kindMutatingWebhookConfiguration   = "MutatingWebhookConfiguration"
-	capiSecurityContextConstraintsName = "oci-capi"
-	runtimeDefaultSeccompProfile       = "runtime/default"
-	systemServiceAccountSubjectFormat  = "system:serviceaccount:%s:%s"
+	componentNameCAPI                    = "CAPI"
+	clusterAPIProviderName               = "cluster-api"
+	kindService                          = "Service"
+	kindDeployment                       = "Deployment"
+	kindServiceAccount                   = "ServiceAccount"
+	kindCertificate                      = "Certificate"
+	kindIssuer                           = "Issuer"
+	kindNamespace                        = "Namespace"
+	kindSecret                           = "Secret"
+	kindCustomResourceDefinition         = "CustomResourceDefinition"
+	kindValidatingWebhookConfiguration   = "ValidatingWebhookConfiguration"
+	kindMutatingWebhookConfiguration     = "MutatingWebhookConfiguration"
+	capiSecurityContextConstraintsName   = "oci-capi"
+	capociSecurityContextConstraintsName = "oci-capoci"
+	runtimeDefaultSeccompProfile         = "runtime/default"
+	systemServiceAccountSubjectFormat    = "system:serviceaccount:%s:%s"
 )
 
 // GetClusterctlComponents returns a list of components for the CAPI controller manager
@@ -77,13 +78,25 @@ func GetClusterctlComponents(ctx context.Context, deploymentName string, service
 }
 
 func GetComponents(capiSystemNamespace, capociSystemNamespace, capiServiceAccountName, capociServiceAccountName string, instance *capiv1alpha1.OCIClusterAutoscaler, allowCAPOCIHostNetwork bool) *components.Component {
-	capiSCC, capiSCCMutateFn := SecurityContextConstraints(capiSystemNamespace, capociSystemNamespace, capociServiceAccountName, capiServiceAccountName, instance, allowCAPOCIHostNetwork)
+	capiSCC, capiSCCMutateFn := SecurityContextConstraints(
+		capiSecurityContextConstraintsName,
+		[]string{serviceAccountSubject(capiSystemNamespace, capiServiceAccountName)},
+		instance,
+		false,
+	)
+	capociSCC, capociSCCMutateFn := SecurityContextConstraints(
+		capociSecurityContextConstraintsName,
+		[]string{serviceAccountSubject(capociSystemNamespace, capociServiceAccountName)},
+		instance,
+		allowCAPOCIHostNetwork,
+	)
 	namespace, namespaceMutateFn := CAPINamespace(capiSystemNamespace, instance)
 
 	return &components.Component{
 		Name: componentNameCAPI,
 		Subcomponents: components.SubcomponentList{
-			{Name: "scc", Object: capiSCC, MutateFn: capiSCCMutateFn},
+			{Name: "capiSCC", Object: capiSCC, MutateFn: capiSCCMutateFn},
+			{Name: "capociSCC", Object: capociSCC, MutateFn: capociSCCMutateFn},
 			{Name: "namespace", Object: namespace, MutateFn: namespaceMutateFn},
 		},
 	}
@@ -102,31 +115,56 @@ func CAPINamespace(capiSystemNamespace string, instance *capiv1alpha1.OCICluster
 	return namespace, mutateFn
 }
 
-// SecurityContextConstraints defines the SCC for the CAPI manager and CAPOCI controller manager
-func SecurityContextConstraints(capiSystemNamespace string, capociSystemNamespace string, capociServiceAccountName string, capiServiceAccountName string, instance *capiv1alpha1.OCIClusterAutoscaler, allowCAPOCIHostNetwork bool) (client.Object, controllerutil.MutateFn) {
+// SecurityContextConstraints defines an SCC for provider controller-manager pods.
+func SecurityContextConstraints(name string, users []string, instance *capiv1alpha1.OCIClusterAutoscaler, allowHostNetwork bool) (client.Object, controllerutil.MutateFn) {
 	scc := &securityv1.SecurityContextConstraints{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: capiSecurityContextConstraintsName,
+			Name: name,
 		},
 	}
 
 	mutateFn := func() error {
+		allowPrivilegeEscalation := false
 		scc.RunAsUser = securityv1.RunAsUserStrategyOptions{
-			Type: securityv1.RunAsUserStrategyRunAsAny,
+			Type: securityv1.RunAsUserStrategyMustRunAsRange,
 		}
 		scc.SELinuxContext = securityv1.SELinuxContextStrategyOptions{
-			Type: securityv1.SELinuxStrategyRunAsAny,
+			Type: securityv1.SELinuxStrategyMustRunAs,
 		}
-		scc.AllowHostNetwork = allowCAPOCIHostNetwork
-		scc.AllowHostPorts = allowCAPOCIHostNetwork
+		scc.FSGroup = securityv1.FSGroupStrategyOptions{
+			Type: securityv1.FSGroupStrategyMustRunAs,
+		}
+		scc.SupplementalGroups = securityv1.SupplementalGroupsStrategyOptions{
+			Type: securityv1.SupplementalGroupsStrategyRunAsAny,
+		}
+		scc.AllowPrivilegedContainer = false
+		scc.AllowHostDirVolumePlugin = false
+		scc.AllowHostNetwork = allowHostNetwork
+		scc.AllowHostPorts = false
+		scc.AllowHostPID = false
+		scc.AllowHostIPC = false
+		scc.AllowPrivilegeEscalation = &allowPrivilegeEscalation
+		scc.DefaultAllowPrivilegeEscalation = &allowPrivilegeEscalation
+		scc.DefaultAddCapabilities = nil
+		scc.AllowedCapabilities = nil
+		scc.RequiredDropCapabilities = []corev1.Capability{"ALL"}
+		scc.Volumes = []securityv1.FSType{
+			securityv1.FSTypeConfigMap,
+			securityv1.FSTypeDownwardAPI,
+			securityv1.FSTypeEmptyDir,
+			securityv1.FSTypePersistentVolumeClaim,
+			securityv1.FSProjected,
+			securityv1.FSTypeSecret,
+		}
 		scc.SeccompProfiles = []string{runtimeDefaultSeccompProfile}
-		scc.Users = []string{
-			fmt.Sprintf(systemServiceAccountSubjectFormat, capociSystemNamespace, capociServiceAccountName),
-			fmt.Sprintf(systemServiceAccountSubjectFormat, capiSystemNamespace, capiServiceAccountName),
-		}
+		scc.Users = users
 		utils.SetDefaultLabels(scc, instance.Name)
 		return nil
 	}
 
 	return scc, mutateFn
+}
+
+func serviceAccountSubject(namespace, name string) string {
+	return fmt.Sprintf(systemServiceAccountSubjectFormat, namespace, name)
 }

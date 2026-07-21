@@ -17,9 +17,42 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestRunCommandDefaultsLeaderElectionOn(t *testing.T) {
+	t.Parallel()
+
+	flag := NewRunCommand().Flags().Lookup("leader-elect")
+	if flag == nil {
+		t.Fatal("leader-elect flag was not registered")
+	}
+	if flag.DefValue != "true" {
+		t.Fatalf("leader-elect default = %q, want true", flag.DefValue)
+	}
+}
+
+func TestApplyLeaderElectionTiming(t *testing.T) {
+	t.Parallel()
+
+	options := ctrl.Options{}
+	applyLeaderElectionTiming(&options)
+
+	if options.LeaseDuration == nil || *options.LeaseDuration != defaultLeaderElectionLeaseDuration {
+		t.Fatalf("LeaseDuration = %v, want %s", options.LeaseDuration, defaultLeaderElectionLeaseDuration)
+	}
+	if options.RenewDeadline == nil || *options.RenewDeadline != defaultLeaderElectionRenewDeadline {
+		t.Fatalf("RenewDeadline = %v, want %s", options.RenewDeadline, defaultLeaderElectionRenewDeadline)
+	}
+	if options.RetryPeriod == nil || *options.RetryPeriod != defaultLeaderElectionRetryPeriod {
+		t.Fatalf("RetryPeriod = %v, want %s", options.RetryPeriod, defaultLeaderElectionRetryPeriod)
+	}
+	if !options.LeaderElectionReleaseOnCancel {
+		t.Fatal("LeaderElectionReleaseOnCancel = false, want true")
+	}
+}
 
 func TestValidateOptions(t *testing.T) {
 	t.Parallel()

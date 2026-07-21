@@ -8,6 +8,7 @@ package controllers
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"testing"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -16,6 +17,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -53,6 +55,13 @@ func TestReconcileClusterctlComponentsCorrectsFullObjectDrift(t *testing.T) {
 				if !reflect.DeepEqual(args, []string{"--leader-elect", "--diagnostics-address=:8443"}) {
 					t.Fatalf("deployment args drift was not corrected: %#v", args)
 				}
+
+				strategyType, found, err := unstructured.NestedString(got.Object, "spec", "strategy", "type")
+				if err != nil || !found || strategyType != "RollingUpdate" {
+					t.Fatalf("deployment strategy type = %q, found=%v err=%v, want RollingUpdate", strategyType, found, err)
+				}
+				requireNestedIntOrString(t, got.Object, "1", "spec", "strategy", "rollingUpdate", "maxSurge")
+				requireNestedIntOrString(t, got.Object, "0", "spec", "strategy", "rollingUpdate", "maxUnavailable")
 
 				volumes, found, err := unstructured.NestedSlice(got.Object, "spec", "template", "spec", "volumes")
 				if err != nil || !found || len(volumes) != 1 {
@@ -171,6 +180,39 @@ func isExpectedWebhookCABundle(value interface{}) bool {
 		return string(typed) == "injected-ca-bundle"
 	default:
 		return false
+	}
+}
+
+func requireNestedIntOrString(t *testing.T, obj map[string]interface{}, want string, fields ...string) {
+	t.Helper()
+
+	value, found, err := unstructured.NestedFieldNoCopy(obj, fields...)
+	if err != nil || !found {
+		t.Fatalf("%v found=%v err=%v, want %q", fields, found, err, want)
+	}
+	got, ok := intOrStringValue(value)
+	if !ok {
+		t.Fatalf("%v has unsupported value %#v (%T), want %q", fields, value, value, want)
+	}
+	if got != want {
+		t.Fatalf("%v = %q, want %q", fields, got, want)
+	}
+}
+
+func intOrStringValue(value interface{}) (string, bool) {
+	switch typed := value.(type) {
+	case int:
+		return strconv.Itoa(typed), true
+	case int32:
+		return strconv.FormatInt(int64(typed), 10), true
+	case int64:
+		return strconv.FormatInt(typed, 10), true
+	case string:
+		return typed, true
+	case intstr.IntOrString:
+		return typed.String(), true
+	default:
+		return "", false
 	}
 }
 

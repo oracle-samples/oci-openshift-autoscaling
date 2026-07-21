@@ -49,12 +49,10 @@ var _ = Describe("CAPI Components", func() {
 	})
 
 	Context("SecurityContextConstraints", func() {
-		It("should create SCC with correct configuration", func() {
+		It("should create a least-privilege CAPI SCC", func() {
 			obj, mutateFn := SecurityContextConstraints(
-				"oci-openshift-autoscaling-operator",
-				"capoci-system",
-				"capoci-sa",
-				"capi-sa",
+				"oci-capi",
+				[]string{"system:serviceaccount:oci-openshift-autoscaling-operator:capi-sa"},
 				instance,
 				false,
 			)
@@ -69,15 +67,35 @@ var _ = Describe("CAPI Components", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify configuration
-			Expect(scc.RunAsUser.Type).To(Equal(securityv1.RunAsUserStrategyRunAsAny))
-			Expect(scc.SELinuxContext.Type).To(Equal(securityv1.SELinuxStrategyRunAsAny))
+			Expect(scc.RunAsUser.Type).To(Equal(securityv1.RunAsUserStrategyMustRunAsRange))
+			Expect(scc.SELinuxContext.Type).To(Equal(securityv1.SELinuxStrategyMustRunAs))
+			Expect(scc.FSGroup.Type).To(Equal(securityv1.FSGroupStrategyMustRunAs))
+			Expect(scc.SupplementalGroups.Type).To(Equal(securityv1.SupplementalGroupsStrategyRunAsAny))
+			Expect(scc.AllowPrivilegedContainer).To(BeFalse())
 			Expect(scc.AllowHostNetwork).To(BeFalse())
 			Expect(scc.AllowHostPorts).To(BeFalse())
+			Expect(scc.AllowHostPID).To(BeFalse())
+			Expect(scc.AllowHostIPC).To(BeFalse())
+			Expect(scc.AllowHostDirVolumePlugin).To(BeFalse())
+			Expect(scc.AllowPrivilegeEscalation).NotTo(BeNil())
+			Expect(*scc.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(scc.DefaultAllowPrivilegeEscalation).NotTo(BeNil())
+			Expect(*scc.DefaultAllowPrivilegeEscalation).To(BeFalse())
+			Expect(scc.RequiredDropCapabilities).To(ConsistOf(corev1.Capability("ALL")))
+			Expect(scc.AllowedCapabilities).To(BeEmpty())
+			Expect(scc.DefaultAddCapabilities).To(BeEmpty())
+			Expect(scc.Volumes).To(ConsistOf(
+				securityv1.FSTypeConfigMap,
+				securityv1.FSTypeDownwardAPI,
+				securityv1.FSTypeEmptyDir,
+				securityv1.FSTypePersistentVolumeClaim,
+				securityv1.FSProjected,
+				securityv1.FSTypeSecret,
+			))
 			Expect(scc.SeccompProfiles).To(ConsistOf("runtime/default"))
 
 			// Verify service account users
 			expectedUsers := []string{
-				"system:serviceaccount:capoci-system:capoci-sa",
 				"system:serviceaccount:oci-openshift-autoscaling-operator:capi-sa",
 			}
 			Expect(scc.Users).To(ConsistOf(expectedUsers))
@@ -87,12 +105,10 @@ var _ = Describe("CAPI Components", func() {
 			Expect(scc.Labels).To(Equal(defaultLabels))
 		})
 
-		It("should allow host networking when requested for CAPOCI", func() {
+		It("should allow host networking only when requested for CAPOCI", func() {
 			obj, mutateFn := SecurityContextConstraints(
-				"oci-openshift-autoscaling-operator",
-				"capoci-system",
-				"capoci-sa",
-				"capi-sa",
+				"oci-capoci",
+				[]string{"system:serviceaccount:capoci-system:capoci-sa"},
 				instance,
 				true,
 			)
@@ -103,7 +119,8 @@ var _ = Describe("CAPI Components", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(scc.AllowHostNetwork).To(BeTrue())
-			Expect(scc.AllowHostPorts).To(BeTrue())
+			Expect(scc.AllowHostPorts).To(BeFalse())
+			Expect(scc.Users).To(ConsistOf("system:serviceaccount:capoci-system:capoci-sa"))
 		})
 	})
 
@@ -119,17 +136,24 @@ var _ = Describe("CAPI Components", func() {
 			)
 
 			Expect(component.Name).To(Equal("CAPI"))
-			Expect(component.Subcomponents).To(HaveLen(2))
+			Expect(component.Subcomponents).To(HaveLen(3))
 
-			// Verify SCC subcomponent
+			// Verify CAPI SCC subcomponent
 			scc := component.Subcomponents[0]
-			Expect(scc.Name).To(Equal("scc"))
+			Expect(scc.Name).To(Equal("capiSCC"))
 			_, ok := scc.Object.(*securityv1.SecurityContextConstraints)
 			Expect(ok).To(BeTrue())
 			Expect(scc.MutateFn).NotTo(BeNil())
 
+			// Verify CAPOCI SCC subcomponent
+			capociSCC := component.Subcomponents[1]
+			Expect(capociSCC.Name).To(Equal("capociSCC"))
+			_, ok = capociSCC.Object.(*securityv1.SecurityContextConstraints)
+			Expect(ok).To(BeTrue())
+			Expect(capociSCC.MutateFn).NotTo(BeNil())
+
 			// Verify Namespace subcomponent
-			ns := component.Subcomponents[1]
+			ns := component.Subcomponents[2]
 			Expect(ns.Name).To(Equal("namespace"))
 			_, ok = ns.Object.(*corev1.Namespace)
 			Expect(ok).To(BeTrue())

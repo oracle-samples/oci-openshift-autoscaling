@@ -17,6 +17,15 @@ import (
 	"github.com/openshift/oci-capi-operator/internal/utils"
 )
 
+func autoscalerInfrastructureReadResources() []string {
+	return []string{
+		"ociclusters",
+		"ociclusteridentities",
+		"ocimachinetemplates",
+		"ocimachines",
+	}
+}
+
 func ClusterRole(autoscalerName string, instance *ocicapiv1alpha1.OCIClusterAutoscaler) (client.Object, func() error) {
 	clusterRole := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
@@ -28,8 +37,8 @@ func ClusterRole(autoscalerName string, instance *ocicapiv1alpha1.OCIClusterAuto
 		clusterRole.Rules = []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{"infrastructure.cluster.x-k8s.io"},
-				Resources: []string{"*"},
-				Verbs:     []string{"get", "list", "watch", "update"},
+				Resources: autoscalerInfrastructureReadResources(),
+				Verbs:     []string{"get", "list", "watch"},
 			},
 		}
 		utils.SetDefaultLabels(clusterRole, instance.Name)

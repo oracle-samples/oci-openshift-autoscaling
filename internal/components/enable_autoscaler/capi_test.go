@@ -165,7 +165,7 @@ var _ = Describe("CAPI Components", func() {
 	})
 
 	Context("CAPICluster", func() {
-		It("should build infrastructure refs with apiVersion for Cluster API v1beta1", func() {
+		It("should build infrastructure refs with apiVersion for Cluster API v1beta2", func() {
 			ref, err := infrastructureRef(ociInfrastructureAPIVersion, ociClusterKind, "test-namespace", "test-cluster")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ref).To(Equal(map[string]interface{}{
@@ -184,7 +184,7 @@ var _ = Describe("CAPI Components", func() {
 			// Verify initial state
 			Expect(cluster.GetName()).To(Equal("test-cluster"))
 			Expect(cluster.GetNamespace()).To(Equal("oci-openshift-autoscaling-operator"))
-			Expect(cluster.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta1"))
+			Expect(cluster.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta2"))
 
 			// Apply mutation
 			err := mutateFn()
@@ -518,7 +518,7 @@ var _ = Describe("CAPI Components", func() {
 			// Verify initial state
 			Expect(deployment.GetName()).To(Equal("test-cluster"))
 			Expect(deployment.GetNamespace()).To(Equal("oci-openshift-autoscaling-operator"))
-			Expect(deployment.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta1"))
+			Expect(deployment.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta2"))
 
 			// Apply mutation
 			err := mutateFn()
@@ -708,7 +708,7 @@ var _ = Describe("CAPI Components", func() {
 
 			Expect(mhc.GetName()).To(Equal("test-cluster-autoscaling"))
 			Expect(mhc.GetNamespace()).To(Equal("oci-openshift-autoscaling-operator"))
-			Expect(mhc.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta1"))
+			Expect(mhc.GetAPIVersion()).To(Equal("cluster.x-k8s.io/v1beta2"))
 			Expect(mhc.GetKind()).To(Equal("MachineHealthCheck"))
 
 			err := mutateFn()

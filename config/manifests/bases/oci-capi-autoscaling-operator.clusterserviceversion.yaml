@@ -30,15 +30,13 @@ metadata:
               }
             },
             "capi": {
-              "clusterName": "sample-cluster",
-              "namespace": "capi-system"
+              "clusterName": "sample-cluster"
             },
             "clusterAutoscaler": {
               "cloudProvider": "clusterapi",
               "createRBAC": true,
               "createServiceAccount": true,
               "name": "oci-cluster-autoscaler",
-              "namespace": "capi-system",
               "repositoryURL": "https://kubernetes.github.io/autoscaler",
               "serviceAccountName": "oci-cluster-autoscaler"
             }

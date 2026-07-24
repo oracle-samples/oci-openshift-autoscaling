@@ -72,9 +72,6 @@ func GetAutoscalerDeploymentValues(originalValues AutoscalerDeploymentValues, in
 	if instance.Spec.ClusterAutoscaler.Name != "" {
 		originalValues.Name = instance.Spec.ClusterAutoscaler.Name
 	}
-	if instance.Spec.ClusterAutoscaler.Namespace != "" {
-		originalValues.Namespace = instance.Spec.ClusterAutoscaler.Namespace
-	}
 	if instance.Spec.ClusterAutoscaler.ServiceAccountName != "" {
 		originalValues.ServiceAccountName = instance.Spec.ClusterAutoscaler.ServiceAccountName
 	}

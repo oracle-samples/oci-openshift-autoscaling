@@ -41,7 +41,7 @@ Additional components outside of the default clusterctl generation include:
 CAPOCI deployment uses the clusterctl library.
 
 Additional components outside of the default clusterctl generation include:
-- Namespace CR for the operator namespace
+- Namespace CR for the configured CAPOCI provider namespace
 - Secret CR (auth config secret to authenticate to OCI)
 
 ## CRDs

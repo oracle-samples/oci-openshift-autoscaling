@@ -190,7 +190,7 @@ func TestHasMatchingOCIMachine_UsesAutoscalerClusterNameOverride(t *testing.T) {
 	machine := &infrastructurev1beta2.OCIMachine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "worker-1",
-			Namespace: "custom-machine-ns",
+			Namespace: "startup-machine-ns",
 			Labels: map[string]string{
 				clusterNameLabelKey: "custom-cluster",
 			},
@@ -203,7 +203,6 @@ func TestHasMatchingOCIMachine_UsesAutoscalerClusterNameOverride(t *testing.T) {
 		},
 		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
 			CAPI: capiv1alpha1.CAPIConfig{
-				Namespace:   "custom-machine-ns",
 				ClusterName: "custom-cluster",
 			},
 		},
@@ -221,7 +220,7 @@ func TestHasMatchingOCIMachine_UsesAutoscalerClusterNameOverride(t *testing.T) {
 		t.Fatalf("hasMatchingOCIMachine() error = %v", err)
 	}
 	if !matched {
-		t.Fatalf("expected OCIMachine to match CR-provided CSR approval scope")
+		t.Fatalf("expected OCIMachine to match CR-provided cluster name and configured machine namespace")
 	}
 	if machineName != "worker-1" {
 		t.Fatalf("expected machine name worker-1, got %s", machineName)
@@ -247,7 +246,6 @@ func TestHasMatchingOCIMachine_UsesSingletonOwnerWhenMultipleAutoscalersExist(t 
 		},
 		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
 			CAPI: capiv1alpha1.CAPIConfig{
-				Namespace:   "owner-machine-ns",
 				ClusterName: "owner-cluster",
 			},
 		},
@@ -260,7 +258,6 @@ func TestHasMatchingOCIMachine_UsesSingletonOwnerWhenMultipleAutoscalersExist(t 
 		},
 		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
 			CAPI: capiv1alpha1.CAPIConfig{
-				Namespace:   "contender-machine-ns",
 				ClusterName: "contender-cluster",
 			},
 		},
@@ -278,7 +275,7 @@ func TestHasMatchingOCIMachine_UsesSingletonOwnerWhenMultipleAutoscalersExist(t 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(owner, contender, machine).Build()
 	r := &CertificateApprovalReconciler{
 		Client:           c,
-		MachineNamespace: "startup-machine-ns",
+		MachineNamespace: "owner-machine-ns",
 		ClusterName:      "startup-cluster",
 	}
 
@@ -312,7 +309,6 @@ func TestHasMatchingOCIMachine_DoesNotUseStartupScopeWhenAutoscalerOwnerExists(t
 		},
 		Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
 			CAPI: capiv1alpha1.CAPIConfig{
-				Namespace:   "custom-machine-ns",
 				ClusterName: "custom-cluster",
 			},
 		},

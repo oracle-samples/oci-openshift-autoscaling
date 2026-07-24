@@ -12,6 +12,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/oci-capi-operator/internal/components/capoci"
+	enableautoscaler "github.com/openshift/oci-capi-operator/internal/components/enable_autoscaler"
 	"github.com/openshift/oci-capi-operator/internal/controllers"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -73,6 +74,7 @@ func TestValidateOptions(t *testing.T) {
 					PrivateKey:           "-----BEGIN PRIVATE KEY-----",
 					UseInstancePrincipal: "false",
 				},
+				AutoScalingConfig: validAutoScalingConfig(),
 				CSRApprovalConfig: CSRApprovalConfig{ClusterName: "test-cluster"},
 			},
 		},
@@ -83,6 +85,7 @@ func TestValidateOptions(t *testing.T) {
 					Region:               "us-phoenix-1",
 					UseInstancePrincipal: "true",
 				},
+				AutoScalingConfig: validAutoScalingConfig(),
 				CSRApprovalConfig: CSRApprovalConfig{ClusterName: "test-cluster"},
 			},
 		},
@@ -92,6 +95,7 @@ func TestValidateOptions(t *testing.T) {
 				CAPOCICredentials: capoci.CAPOCICredentials{
 					UseInstancePrincipal: "false",
 				},
+				AutoScalingConfig: validAutoScalingConfig(),
 				CSRApprovalConfig: CSRApprovalConfig{ClusterName: "test-cluster"},
 			},
 			wantErr: "key-based auth requires OCI_TENANCY_ID, OCI_USER_ID, OCI_REGION, OCI_CREDENTIALS_FINGERPRINT, OCI_CREDENTIALS_KEY",
@@ -103,6 +107,7 @@ func TestValidateOptions(t *testing.T) {
 					Region:               "us-phoenix-1",
 					UseInstancePrincipal: "true",
 				},
+				AutoScalingConfig: validAutoScalingConfig(),
 			},
 			wantErr: "CSR approval requires CSR_CLUSTER_NAME or CLUSTER_NAME",
 		},
@@ -114,9 +119,27 @@ func TestValidateOptions(t *testing.T) {
 					UseInstancePrincipal: "true",
 				},
 				NamespaceConfig:   controllers.NamespaceConfig{OperatorNamespace: "Invalid_Namespace"},
+				AutoScalingConfig: validAutoScalingConfig(),
 				CSRApprovalConfig: CSRApprovalConfig{ClusterName: "test-cluster"},
 			},
 			wantErr: "operator namespace \"Invalid_Namespace\" must be a valid Kubernetes namespace: a lowercase RFC 1123 label must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character (e.g. 'my-name',  or '123-abc', regex used for validation is '[a-z0-9]([-a-z0-9]*[a-z0-9])?')",
+		},
+		{
+			name: "rejects invalid startup autoscaling shape config",
+			options: Options{
+				CAPOCICredentials: capoci.CAPOCICredentials{
+					Region:               "us-phoenix-1",
+					UseInstancePrincipal: "true",
+				},
+				AutoScalingConfig: enableautoscaler.Config{
+					AutoScalingConfig: enableautoscaler.AutoScalingConfig{
+						CPUs:   0,
+						Memory: 4,
+					},
+				},
+				CSRApprovalConfig: CSRApprovalConfig{ClusterName: "test-cluster"},
+			},
+			wantErr: "shapeConfig.cpus must be greater than 0",
 		},
 	}
 
@@ -138,6 +161,15 @@ func TestValidateOptions(t *testing.T) {
 				t.Fatalf("validateOptions() error = %q, want %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func validAutoScalingConfig() enableautoscaler.Config {
+	return enableautoscaler.Config{
+		AutoScalingConfig: enableautoscaler.AutoScalingConfig{
+			CPUs:   2,
+			Memory: 4,
+		},
 	}
 }
 

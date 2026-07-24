@@ -15,8 +15,12 @@ import (
 	capiv1alpha1 "github.com/openshift/oci-capi-operator/api/v1alpha1"
 	"github.com/openshift/oci-capi-operator/internal/components"
 	"github.com/openshift/oci-capi-operator/internal/utils"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 )
@@ -58,7 +62,7 @@ func InstallAutoscaler(instance *capiv1alpha1.OCIClusterAutoscaler, values *Auto
 		Version:     values.Version,
 		Wait:        true,
 		Timeout:     300 * time.Second,
-		Labels:      utils.GetDefaultLabels(instance.Name),
+		Labels:      utils.GetComponentLabels(instance.Name, "Autoscaler", "helmRelease"),
 	}
 
 	if releaseExists {
@@ -167,14 +171,30 @@ func RemoveAutoscaler(values *AutoscalerDeploymentValues, restConfig *rest.Confi
 
 // GetComponents returns a Component for the cluster-autoscaler which includes a list of subcomponents
 func GetComponents(values *AutoscalerDeploymentValues, instance *capiv1alpha1.OCIClusterAutoscaler, scheme *runtime.Scheme) *components.Component {
+	namespace, namespaceMutateFn := Namespace(values.Namespace, instance)
 	clusterRole, clusterRoleMutateFn := ClusterRole(values.Name, instance)
 	clusterRoleBinding, clusterRoleBindingMutateFn := ClusterRoleBinding(values, instance)
 
 	return &components.Component{
-		Name: "Autoscaler",
+		InstanceName: instance.Name,
+		Name:         "Autoscaler",
 		Subcomponents: components.SubcomponentList{
+			{Name: "namespace", Object: namespace, MutateFn: namespaceMutateFn},
 			{Name: "clusterRole", Object: clusterRole, MutateFn: clusterRoleMutateFn},
 			{Name: "clusterRoleBinding", Object: clusterRoleBinding, MutateFn: clusterRoleBindingMutateFn},
 		},
 	}
+}
+
+func Namespace(namespaceName string, instance *capiv1alpha1.OCIClusterAutoscaler) (client.Object, controllerutil.MutateFn) {
+	namespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespaceName,
+		},
+	}
+	mutateFn := func() error {
+		utils.SetDefaultLabels(namespace, instance.Name)
+		return nil
+	}
+	return namespace, mutateFn
 }

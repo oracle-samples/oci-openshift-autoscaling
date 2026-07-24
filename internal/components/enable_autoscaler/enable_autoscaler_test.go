@@ -65,6 +65,7 @@ var _ = Describe("Enable Autoscaler", func() {
 			component := GetComponents(ctx, mockClient, "oci-openshift-autoscaling-operator", "capi-provider", "test-cluster", "capi-sa", instance, config, false)
 
 			Expect(component.Name).To(Equal("EnableAutoscaler"))
+			Expect(component.InstanceName).To(Equal(instance.Name))
 			Expect(component.Subcomponents).To(HaveLen(8))
 
 			// Verify ManagedResourceNamespace subcomponent

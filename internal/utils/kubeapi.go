@@ -24,6 +24,14 @@ const (
 	OpenshiftCABundleAnnotation    = "service.beta.openshift.io/inject-cabundle"
 	OpenshiftServiceCertAnnotation = "service.beta.openshift.io/serving-cert-secret-name"
 	ManagedByLabel                 = "capi.openshift.io/managed-by"
+	ComponentLabel                 = "capi.openshift.io/component"
+	SubcomponentLabel              = "capi.openshift.io/subcomponent"
+	AppNameLabel                   = "app.kubernetes.io/name"
+	AppInstanceLabel               = "app.kubernetes.io/instance"
+	AppComponentLabel              = "app.kubernetes.io/component"
+	AppPartOfLabel                 = "app.kubernetes.io/part-of"
+	AppManagedByLabel              = "app.kubernetes.io/managed-by"
+	AppName                        = "oci-capi-autoscaling-operator"
 
 	OCIInstanceManagedByTag             = "oci-capi-operator-managed-by"
 	OCIInstanceAutoscalerNamespaceTag   = "oci-capi-operator-autoscaler-namespace"
@@ -104,7 +112,23 @@ func GetDefaultLabels(instanceName string) map[string]string {
 	return map[string]string{
 		"cluster.x-k8s.io/provider": "cluster-api",
 		ManagedByLabel:              instanceName,
+		AppNameLabel:                AppName,
+		AppInstanceLabel:            instanceName,
+		AppPartOfLabel:              AppName,
+		AppManagedByLabel:           AppName,
 	}
+}
+
+func GetComponentLabels(instanceName, componentName, subcomponentName string) map[string]string {
+	labels := GetDefaultLabels(instanceName)
+	if componentName != "" {
+		labels[ComponentLabel] = componentName
+		labels[AppComponentLabel] = componentName
+	}
+	if subcomponentName != "" {
+		labels[SubcomponentLabel] = subcomponentName
+	}
+	return labels
 }
 
 // SetDefaultLabels sets the default labels for the object
@@ -112,14 +136,41 @@ func SetDefaultLabels(obj client.Object, instanceName string) error {
 	if obj == nil {
 		return fmt.Errorf("object is nil")
 	}
-	labels := GetDefaultLabels(instanceName)
-	if objLabels := obj.GetLabels(); objLabels != nil {
-		for key, value := range objLabels {
+	obj.SetLabels(mergeManagedLabels(obj.GetLabels(), GetDefaultLabels(instanceName)))
+	return nil
+}
+
+func SetComponentLabels(obj client.Object, instanceName, componentName, subcomponentName string) error {
+	if obj == nil {
+		return fmt.Errorf("object is nil")
+	}
+	obj.SetLabels(mergeManagedLabels(obj.GetLabels(), GetComponentLabels(instanceName, componentName, subcomponentName)))
+	return nil
+}
+
+func mergeManagedLabels(existing, managed map[string]string) map[string]string {
+	labels := map[string]string{}
+	for key, value := range existing {
+		labels[key] = value
+	}
+	for key, value := range managed {
+		if isOperatorOwnedLabel(key) || labels[key] == "" {
 			labels[key] = value
 		}
 	}
-	obj.SetLabels(labels)
-	return nil
+	return labels
+}
+
+func isOperatorOwnedLabel(key string) bool {
+	// These labels are part of the operator metadata contract and are reconciled
+	// back to the owning OCIClusterAutoscaler/component when they drift.
+	switch key {
+	case ManagedByLabel, ComponentLabel, SubcomponentLabel,
+		AppNameLabel, AppInstanceLabel, AppComponentLabel, AppPartOfLabel, AppManagedByLabel:
+		return true
+	default:
+		return false
+	}
 }
 
 func SetOpenshiftServiceCertAnnotation(obj *unstructured.Unstructured, name string) error {

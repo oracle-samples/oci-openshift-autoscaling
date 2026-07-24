@@ -136,6 +136,7 @@ var _ = Describe("CAPI Components", func() {
 			)
 
 			Expect(component.Name).To(Equal("CAPI"))
+			Expect(component.InstanceName).To(Equal(instance.Name))
 			Expect(component.Subcomponents).To(HaveLen(3))
 
 			// Verify CAPI SCC subcomponent

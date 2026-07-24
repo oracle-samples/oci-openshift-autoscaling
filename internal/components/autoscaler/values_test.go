@@ -142,7 +142,6 @@ var _ = Describe("Autoscaler Values", func() {
 					ClusterAutoscaler: capiv1alpha1.ClusterAutoscalerConfig{
 						CloudProvider:        "custom-provider",
 						Name:                 "custom-autoscaler",
-						Namespace:            "custom-namespace",
 						ServiceAccountName:   "custom-sa",
 						CreateRBAC:           ptr.To(true),
 						CreateServiceAccount: ptr.To(true),
@@ -157,7 +156,7 @@ var _ = Describe("Autoscaler Values", func() {
 			// Verify overrides
 			Expect(values.CloudProvider).To(Equal("custom-provider"))
 			Expect(values.Name).To(Equal("custom-autoscaler"))
-			Expect(values.Namespace).To(Equal("custom-namespace"))
+			Expect(values.Namespace).To(Equal(defaultValues.Namespace))
 			Expect(values.ServiceAccountName).To(Equal("custom-sa"))
 			Expect(values.CreateRBAC).To(BeTrue())
 			Expect(values.CreateServiceAccount).To(BeTrue())
@@ -174,6 +173,34 @@ var _ = Describe("Autoscaler Values", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("should override true boolean defaults with explicit false values", func() {
+			defaultValues.CreateRBAC = true
+			defaultValues.CreateServiceAccount = true
+			instance := &capiv1alpha1.OCIClusterAutoscaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-autoscaler",
+				},
+				Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
+					ClusterAutoscaler: capiv1alpha1.ClusterAutoscalerConfig{
+						CreateRBAC:           ptr.To(false),
+						CreateServiceAccount: ptr.To(false),
+					},
+				},
+			}
+
+			values := GetAutoscalerDeploymentValues(defaultValues, instance)
+
+			Expect(values.CreateRBAC).To(BeFalse())
+			Expect(values.CreateServiceAccount).To(BeFalse())
+
+			valuesStr := GetValuesString(&values)
+			var parsedValues AutoscalerValues
+			err := yaml.Unmarshal([]byte(valuesStr), &parsedValues)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parsedValues.RBAC.Create).To(BeFalse())
+			Expect(parsedValues.RBAC.ServiceAccount.Create).To(BeFalse())
+		})
+
 		It("should handle partial overrides", func() {
 			instance := &capiv1alpha1.OCIClusterAutoscaler{
 				ObjectMeta: metav1.ObjectMeta{
@@ -181,8 +208,8 @@ var _ = Describe("Autoscaler Values", func() {
 				},
 				Spec: capiv1alpha1.OCIClusterAutoscalerSpec{
 					ClusterAutoscaler: capiv1alpha1.ClusterAutoscalerConfig{
-						Name:      "custom-autoscaler",
-						Namespace: "custom-namespace",
+						Name:               "custom-autoscaler",
+						ServiceAccountName: "custom-sa",
 					},
 				},
 			}
@@ -191,11 +218,11 @@ var _ = Describe("Autoscaler Values", func() {
 
 			// Verify overridden fields
 			Expect(values.Name).To(Equal("custom-autoscaler"))
-			Expect(values.Namespace).To(Equal("custom-namespace"))
+			Expect(values.ServiceAccountName).To(Equal("custom-sa"))
 
 			// Verify unchanged fields
 			Expect(values.CloudProvider).To(Equal(defaultValues.CloudProvider))
-			Expect(values.ServiceAccountName).To(Equal(defaultValues.ServiceAccountName))
+			Expect(values.Namespace).To(Equal(defaultValues.Namespace))
 			Expect(values.CreateRBAC).To(Equal(defaultValues.CreateRBAC))
 			Expect(values.CreateServiceAccount).To(Equal(defaultValues.CreateServiceAccount))
 			Expect(values.RepositoryURL).To(Equal(defaultValues.RepositoryURL))

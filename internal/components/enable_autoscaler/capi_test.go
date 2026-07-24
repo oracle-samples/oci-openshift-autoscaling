@@ -644,7 +644,7 @@ var _ = Describe("CAPI Components", func() {
 			Expect(replicas).To(Equal(int64(2)))
 		})
 
-		It("should clamp existing replicas into the configured min/max range", func() {
+		It("should leave existing replicas for cluster-autoscaler to manage", func() {
 			obj, mutateFn := MachineDeployment("oci-openshift-autoscaling-operator", "test-cluster", instance, config)
 			deployment := obj.(*unstructured.Unstructured)
 
@@ -658,7 +658,7 @@ var _ = Describe("CAPI Components", func() {
 			replicas, found, err := unstructured.NestedInt64(deployment.Object, "spec", "replicas")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(replicas).To(Equal(int64(3)))
+			Expect(replicas).To(Equal(int64(5)))
 
 			deployment.Object["spec"] = map[string]interface{}{
 				"replicas": int64(0),
@@ -670,7 +670,7 @@ var _ = Describe("CAPI Components", func() {
 			replicas, found, err = unstructured.NestedInt64(deployment.Object, "spec", "replicas")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(replicas).To(Equal(int64(1)))
+			Expect(replicas).To(Equal(int64(0)))
 		})
 
 	})

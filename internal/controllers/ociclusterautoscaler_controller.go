@@ -524,12 +524,6 @@ func validate(instance *capiv1alpha1.OCIClusterAutoscaler, config enableautoscal
 	if err := enableautoscaler.ValidateMinMaxNodes(instance, config); err != nil {
 		return fmt.Errorf("invalid Min/Max nodes set in either the autoscaler spec or the config: %w", err)
 	}
-	if err := validateOptionalNamespace("spec.capi.namespace", instance.Spec.CAPI.Namespace); err != nil {
-		return err
-	}
-	if err := validateOptionalNamespace("spec.clusterAutoscaler.namespace", instance.Spec.ClusterAutoscaler.Namespace); err != nil {
-		return err
-	}
 	if err := validateOptionalObjectName("spec.capi.clusterName", instance.Spec.CAPI.ClusterName); err != nil {
 		return err
 	}
@@ -658,7 +652,19 @@ func reconcileComponents(ctx context.Context, client client.Client, components *
 	allErrs := []error{}
 	logger := log.FromContext(ctx)
 	for _, component := range components.Subcomponents {
-		op, err := controllerutil.CreateOrPatch(ctx, client, component.Object, component.MutateFn)
+		mutateFn := func() error {
+			if component.MutateFn != nil {
+				if err := component.MutateFn(); err != nil {
+					return err
+				}
+			}
+			instanceName := components.InstanceName
+			if instanceName == "" {
+				return fmt.Errorf("component %s/%s has no instance metadata", components.Name, component.Name)
+			}
+			return utils.SetComponentLabels(component.Object, instanceName, components.Name, component.Name)
+		}
+		op, err := controllerutil.CreateOrPatch(ctx, client, component.Object, mutateFn)
 		if err != nil {
 			logger.Error(err, "Failed to reconcile component",
 				"parentComponent", components.Name,
@@ -1141,11 +1147,6 @@ func clusterNameFor(ctx context.Context, reader client.Reader, instance *capiv1a
 
 func managedResourceNamespaceFor(instance *capiv1alpha1.OCIClusterAutoscaler, namespaces NamespaceConfig) string {
 	namespaces = namespaces.WithDefaults()
-	if instance != nil {
-		if namespace := strings.TrimSpace(instance.Spec.CAPI.Namespace); namespace != "" {
-			return namespace
-		}
-	}
 	return namespaces.ManagedResourceNamespace
 }
 

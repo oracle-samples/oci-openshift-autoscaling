@@ -90,6 +90,10 @@ spec:
                         type: integer
                     type: object
                 type: object
+                x-kubernetes-validations:
+                - message: minNodes must be less than or equal to maxNodes
+                  rule: '!has(self.minNodes) || !has(self.maxNodes) || self.minNodes
+                    <= self.maxNodes'
               capi:
                 description: CAPI deployment configuration
                 properties:
@@ -100,14 +104,6 @@ spec:
                     type: string
                     x-kubernetes-validations:
                     - message: clusterName is immutable
-                      rule: self == oldSelf
-                  namespace:
-                    description: Namespace where CAPI resources will be created
-                    maxLength: 63
-                    pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: namespace is immutable
                       rule: self == oldSelf
                 type: object
               clusterAutoscaler:
@@ -134,15 +130,6 @@ spec:
                     type: string
                     x-kubernetes-validations:
                     - message: name is immutable
-                      rule: self == oldSelf
-                  namespace:
-                    description: Namespace is the namespace where the cluster-autoscaler
-                      deployment will be installed
-                    maxLength: 63
-                    pattern: ^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: namespace is immutable
                       rule: self == oldSelf
                   repositoryURL:
                     description: RepositoryURL is the URL for the helm chart of the

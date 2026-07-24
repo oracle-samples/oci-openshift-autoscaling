@@ -48,6 +48,7 @@ func GetComponents(ctx context.Context, client client.Client, managedResourceNam
 	}
 
 	return &components.Component{
+		InstanceName:  autoscaler.Name,
 		Name:          "EnableAutoscaler",
 		Subcomponents: subcomponents,
 	}

@@ -138,6 +138,7 @@ var _ = Describe("CAPOCI Components", func() {
 			component := GetComponents("capoci-system", instance, auth)
 
 			Expect(component.Name).To(Equal("CAPOCI"))
+			Expect(component.InstanceName).To(Equal(instance.Name))
 			Expect(component.Subcomponents).To(HaveLen(2))
 
 			// Verify Namespace subcomponent

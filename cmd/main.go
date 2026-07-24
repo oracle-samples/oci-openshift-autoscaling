@@ -269,6 +269,9 @@ func validateOptions(options Options) error {
 	if err := options.NamespaceConfig.Validate(); err != nil {
 		return err
 	}
+	if err := enableautoscaler.ValidateShapeConfig(nil, options.AutoScalingConfig); err != nil {
+		return err
+	}
 	if strings.TrimSpace(options.CSRApprovalConfig.ClusterName) == "" {
 		return fmt.Errorf("CSR approval requires CSR_CLUSTER_NAME or CLUSTER_NAME")
 	}

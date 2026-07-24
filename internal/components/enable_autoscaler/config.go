@@ -8,6 +8,7 @@ package enableautoscaler
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	ocicapioperatorv1alpha1 "github.com/openshift/oci-capi-operator/api/v1alpha1"
@@ -16,6 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+var definedTagsNamespaceNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,99}$`)
 
 type Config struct {
 	ClusterConfig     ClusterConfig
@@ -59,12 +62,15 @@ func SetAutoScalingConfig(ctx context.Context, client client.Client, instance *o
 	logger := ctrllog.Log.WithName("enableautoscaler").WithValues("component", "config", "resource", instance.Name)
 	clusterCIDRProvided := config.NetworkConfig.ClusterNetworkCIDRBlock != ""
 	serviceCIDRProvided := config.NetworkConfig.ServiceNetworkCIDRBlock != ""
+	if err := ValidateShapeConfig(instance, config); err != nil {
+		return config, err
+	}
 	if instance.Spec.Autoscaling.ShapeConfig != nil {
-		if instance.Spec.Autoscaling.ShapeConfig.CPUs != 0 {
-			config.AutoScalingConfig.CPUs = instance.Spec.Autoscaling.ShapeConfig.CPUs
+		if instance.Spec.Autoscaling.ShapeConfig.CPUs != nil {
+			config.AutoScalingConfig.CPUs = *instance.Spec.Autoscaling.ShapeConfig.CPUs
 		}
-		if instance.Spec.Autoscaling.ShapeConfig.Memory != 0 {
-			config.AutoScalingConfig.Memory = instance.Spec.Autoscaling.ShapeConfig.Memory
+		if instance.Spec.Autoscaling.ShapeConfig.Memory != nil {
+			config.AutoScalingConfig.Memory = *instance.Spec.Autoscaling.ShapeConfig.Memory
 		}
 	}
 	if instance.Spec.Autoscaling.MinNodes != nil {
@@ -98,9 +104,9 @@ func SetAutoScalingConfig(ctx context.Context, client client.Client, instance *o
 		"imageID", applog.SafeResourceIdentifier(config.AutoScalingConfig.ImageID),
 		"imageIDSource", stringSource(instance.Spec.Autoscaling.ImageID),
 		"cpus", config.AutoScalingConfig.CPUs,
-		"cpusSource", int32Source(instance.Spec.Autoscaling.ShapeConfig != nil && instance.Spec.Autoscaling.ShapeConfig.CPUs != 0),
+		"cpusSource", int32Source(instance.Spec.Autoscaling.ShapeConfig != nil && instance.Spec.Autoscaling.ShapeConfig.CPUs != nil),
 		"memoryGB", config.AutoScalingConfig.Memory,
-		"memorySource", int32Source(instance.Spec.Autoscaling.ShapeConfig != nil && instance.Spec.Autoscaling.ShapeConfig.Memory != 0),
+		"memorySource", int32Source(instance.Spec.Autoscaling.ShapeConfig != nil && instance.Spec.Autoscaling.ShapeConfig.Memory != nil),
 		"minNodes", config.AutoScalingConfig.MinNodes,
 		"minNodesSource", int32Source(instance.Spec.Autoscaling.MinNodes != nil),
 		"maxNodes", config.AutoScalingConfig.MaxNodes,
@@ -117,6 +123,26 @@ func SetAutoScalingConfig(ctx context.Context, client client.Client, instance *o
 	)
 
 	return config, nil
+}
+
+func ValidateShapeConfig(instance *ocicapioperatorv1alpha1.OCIClusterAutoscaler, config Config) error {
+	cpus := config.AutoScalingConfig.CPUs
+	memory := config.AutoScalingConfig.Memory
+	if instance != nil && instance.Spec.Autoscaling.ShapeConfig != nil {
+		if instance.Spec.Autoscaling.ShapeConfig.CPUs != nil {
+			cpus = *instance.Spec.Autoscaling.ShapeConfig.CPUs
+		}
+		if instance.Spec.Autoscaling.ShapeConfig.Memory != nil {
+			memory = *instance.Spec.Autoscaling.ShapeConfig.Memory
+		}
+	}
+	if cpus <= 0 {
+		return fmt.Errorf("shapeConfig.cpus must be greater than 0")
+	}
+	if memory <= 0 {
+		return fmt.Errorf("shapeConfig.memory must be greater than 0")
+	}
+	return nil
 }
 
 // SetNetworkConfig finds the network CIDRs in the cluster if it is not set in the config
@@ -153,6 +179,13 @@ func SetNetworkConfig(ctx context.Context, client client.Client, config Config) 
 }
 
 func ValidateDefinedTagsNamespace(config Config) error {
+	namespace := strings.TrimSpace(config.AutoScalingConfig.DefinedTagsNamespace)
+	if namespace == "" {
+		return nil
+	}
+	if !definedTagsNamespaceNamePattern.MatchString(namespace) {
+		return fmt.Errorf("defined tags namespace must start with a letter, contain only letters, numbers, '.', '_' or '-', and be at most 100 characters")
+	}
 	return nil
 }
 

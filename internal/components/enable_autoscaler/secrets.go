@@ -40,7 +40,7 @@ func BootstrapConfigSecret(ctx context.Context, client client.Client, secretName
 			"secret", bootstrapConfigSecret.Name,
 			"namespace", secretNamespace,
 		)
-		utils.SetDefaultLabels(bootstrapConfigSecret, clusterName)
+		utils.SetDefaultLabels(bootstrapConfigSecret, instance.Name)
 		logger.Info("Generating bootstrap ignition secret")
 		ignitionConfig, err := utils.GenerateIgnitionConfig(ctx, client)
 		if err != nil {
@@ -138,7 +138,7 @@ func KubeConfigSecret(ctx context.Context, client client.Client, secretNamespace
 			tokenRequest.Status.Token,
 		)
 
-		utils.SetDefaultLabels(kubeConfigSecret, clusterName)
+		utils.SetDefaultLabels(kubeConfigSecret, instance.Name)
 		kubeConfigSecret.Data = map[string][]byte{
 			"value": []byte(kubeconfig),
 		}

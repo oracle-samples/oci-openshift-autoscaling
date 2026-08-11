@@ -32,9 +32,13 @@ COPY LICENSE.txt THIRD_PARTY_LICENSES.txt ./
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -mod=vendor -o manager ./cmd
 
+ARG CAPI_VERSION
 ARG CAPOCI_VERSION
 COPY clusterctl.yaml clusterctl.yaml
-RUN sed -i.bak "s/CAPOCI_VERSION_PLACEHOLDER/${CAPOCI_VERSION}/g" clusterctl.yaml && rm -f clusterctl.yaml.bak
+RUN sed -i.bak \
+    -e "s/CAPI_VERSION_PLACEHOLDER/${CAPI_VERSION}/g" \
+    -e "s/CAPOCI_VERSION_PLACEHOLDER/${CAPOCI_VERSION}/g" \
+    clusterctl.yaml && rm -f clusterctl.yaml.bak
 
 RUN mkdir -p /workspace/licenses && cp LICENSE.txt THIRD_PARTY_LICENSES.txt /workspace/licenses/
 

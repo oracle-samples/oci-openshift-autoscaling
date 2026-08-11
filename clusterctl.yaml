@@ -4,7 +4,7 @@
 providers:
   # Core provider
   - name: "cluster-api"
-    url: "https://github.com/kubernetes-sigs/cluster-api/releases/download/v1.7.0/core-components.yaml"
+    url: "https://github.com/kubernetes-sigs/cluster-api/releases/download/CAPI_VERSION_PLACEHOLDER/core-components.yaml"
     type: "CoreProvider"
   
   # Infrastructure provider

@@ -99,8 +99,8 @@ Push and release targets such as `make push-image`, `make buildx`, `make bundle-
 
 The operator pins provider component versions through `CAPI_VERSION` and `CAPOCI_VERSION` in the generated install manifests. The default provider versions are:
 
-- CAPI `v1.7.0`
-- CAPOCI `v0.20.2`
+- CAPI `v1.14.0`
+- CAPOCI `v0.24.0`
 
 Treat provider version changes as an explicit upgrade:
 

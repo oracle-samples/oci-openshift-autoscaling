@@ -55,12 +55,10 @@ endif
 OPERATOR_SDK_VERSION ?= v1.39.2
 # Image URL to use all building/pushing image targets
 IMG ?= $(IMAGE_TAG_BASE):$(IMAGE_TAG)
-# CAPI_VERSION defines the version used for CAPI provider components.
-# Keep this aligned with the sigs.k8s.io/cluster-api module version in go.mod.
-CAPI_VERSION ?= v1.7.0
-# CAPOCI_VERSION defines the version used for CAPOCI provider components.
-# Keep this aligned with the github.com/oracle/cluster-api-provider-oci module version in go.mod.
-CAPOCI_VERSION ?= v0.20.2
+# CAPI_VERSION defines the runtime CAPI provider version used by the Terraform v1.6.0 stack.
+CAPI_VERSION ?= v1.14.0
+# CAPOCI_VERSION defines the runtime CAPOCI provider version used by the Terraform v1.6.0 stack.
+CAPOCI_VERSION ?= v0.24.0
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -236,7 +234,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: build-image
 build-image: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} . --platform=linux/arm64 --build-arg TARGETOS=linux --build-arg TARGETARCH=arm64 --build-arg CAPOCI_VERSION=$(CAPOCI_VERSION)
+	$(CONTAINER_TOOL) build -t ${IMG} . --platform=linux/arm64 --build-arg TARGETOS=linux --build-arg TARGETARCH=arm64 --build-arg CAPI_VERSION=$(CAPI_VERSION) --build-arg CAPOCI_VERSION=$(CAPOCI_VERSION)
 
 .PHONY: docker-build
 docker-build: build-image ## Backward-compatible alias used by the e2e suite.
@@ -245,7 +243,7 @@ docker-build: build-image ## Backward-compatible alias used by the e2e suite.
 push-image: ## Build and push docker image with the manager for linux/amd64.
 	$(call require_qualified_image,$(IMG))
 	$(call require_non_latest_image,$(IMG))
-	$(CONTAINER_TOOL) build -t ${IMG} . --platform=linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg CAPOCI_VERSION=$(CAPOCI_VERSION)
+	$(CONTAINER_TOOL) build -t ${IMG} . --platform=linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg CAPI_VERSION=$(CAPI_VERSION) --build-arg CAPOCI_VERSION=$(CAPOCI_VERSION)
 	$(CONTAINER_TOOL) push ${IMG}
 
 .PHONY: docker-push
@@ -267,7 +265,7 @@ buildx: ## Build and push a multi-arch manager image manifest
 		$(CONTAINER_TOOL) buildx create --name oci-capi-autoscaling-operator-builder --driver $(BUILDX_DRIVER) || true; \
 		$(CONTAINER_TOOL) buildx use oci-capi-autoscaling-operator-builder; \
 	fi
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f .tmp/Dockerfile.cross . --build-arg CAPOCI_VERSION=$(CAPOCI_VERSION)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f .tmp/Dockerfile.cross . --build-arg CAPI_VERSION=$(CAPI_VERSION) --build-arg CAPOCI_VERSION=$(CAPOCI_VERSION)
 	if [ "$(BUILDX_DRIVER)" != "docker" ]; then \
 		$(CONTAINER_TOOL) buildx rm oci-capi-autoscaling-operator-builder || true; \
 	fi

@@ -153,6 +153,36 @@ var _ = Describe("Config", func() {
 			Expect(result.AutoScalingConfig.Memory).To(Equal(int32(16)))
 		})
 
+		It("should reject RDMA autoscaling without a Compute Cluster OCID", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "BM.Optimized3.36"
+			cfg.AutoScalingConfig.EnableRDMA = true
+			cfg.AutoScalingConfig.RDMAComputeClusterID = ""
+			cfg.AutoScalingConfig.RDMAFailureDomain = "1"
+			err := ValidateRDMAConfig(cfg)
+			Expect(err).To(MatchError(ContainSubstring("RDMA compute cluster ID must not be empty")))
+		})
+
+		It("should reject RDMA autoscaling without a failure domain", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "BM.Optimized3.36"
+			cfg.AutoScalingConfig.EnableRDMA = true
+			cfg.AutoScalingConfig.RDMAComputeClusterID = "ocid1.computecluster.oc1..example"
+			cfg.AutoScalingConfig.RDMAFailureDomain = ""
+			err := ValidateRDMAConfig(cfg)
+			Expect(err).To(MatchError(ContainSubstring("RDMA failure domain must not be empty")))
+		})
+
+		It("should reject non-bare-metal shapes for RDMA autoscaling", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "VM.Standard.E4.Flex"
+			cfg.AutoScalingConfig.EnableRDMA = true
+			cfg.AutoScalingConfig.RDMAComputeClusterID = "ocid1.computecluster.oc1..example"
+			cfg.AutoScalingConfig.RDMAFailureDomain = "1"
+			err := ValidateRDMAConfig(cfg)
+			Expect(err).To(MatchError(ContainSubstring("bare-metal shape")))
+		})
+
 		It("should treat explicit zero node counts as overrides", func() {
 			instance.Spec.Autoscaling = ocicapioperatorv1alpha1.AutoscalingConfig{
 				MinNodes: ptr.To[int32](0),

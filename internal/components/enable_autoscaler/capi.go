@@ -601,6 +601,17 @@ func OCIMachineTemplate(capiSystemNamespace, clusterName string, instance *ocica
 					NicIndex:       swag.Int(secondaryVnicIndex),
 				},
 			}
+			if config.AutoScalingConfig.EnableRDMA {
+				spec.ComputeClusterId = swag.String(config.AutoScalingConfig.RDMAComputeClusterID)
+				spec.AgentConfig = &infrastructurev1beta2.LaunchInstanceAgentConfig{
+					PluginsConfig: []infrastructurev1beta2.InstanceAgentPluginConfig{
+						{
+							Name:         swag.String("Compute HPC RDMA Authentication"),
+							DesiredState: infrastructurev1beta2.InstanceAgentPluginConfigDetailsDesiredStateEnabled,
+						},
+					},
+				}
+			}
 		} else {
 			// VM shapes:
 			//    1. primary subnet is OCP; no secondary VNIC.
@@ -695,17 +706,21 @@ func MachineDeployment(capiSystemNamespace, clusterName string, instance *ocicap
 		spec["selector"] = map[string]interface{}{
 			"matchLabels": machineLabels,
 		}
+		machineTemplateSpec := map[string]interface{}{
+			"clusterName": clusterName,
+			"bootstrap": map[string]interface{}{
+				"dataSecretName": bootstrapSecretName(clusterName),
+			},
+			"infrastructureRef": infraRef,
+		}
+		if config.AutoScalingConfig.EnableRDMA {
+			machineTemplateSpec["failureDomain"] = config.AutoScalingConfig.RDMAFailureDomain
+		}
 		spec["template"] = map[string]interface{}{
 			"metadata": map[string]interface{}{
 				"labels": machineTemplateLabels(instance.Name, clusterName, nodePoolName),
 			},
-			"spec": map[string]interface{}{
-				"clusterName": clusterName,
-				"bootstrap": map[string]interface{}{
-					"dataSecretName": bootstrapSecretName(clusterName),
-				},
-				"infrastructureRef": infraRef,
-			},
+			"spec": machineTemplateSpec,
 		}
 		if IsBareMetalShape(config.AutoScalingConfig.Shape) {
 			spec["rollout"] = map[string]interface{}{

@@ -34,6 +34,9 @@ type AutoScalingConfig struct {
 	Shape                string `envconfig:"AUTOSCALER_SHAPE" default:"oc3"`
 	ImageID              string `envconfig:"IMAGE_ID" default:""`
 	DefinedTagsNamespace string `envconfig:"AUTOSCALER_DEFINED_TAGS_NAMESPACE" default:""`
+	EnableRDMA           bool   `envconfig:"AUTOSCALER_ENABLE_RDMA" default:"false"`
+	RDMAComputeClusterID string `envconfig:"RDMA_COMPUTE_CLUSTER_ID" default:""`
+	RDMAFailureDomain    string `envconfig:"RDMA_FAILURE_DOMAIN" default:""`
 }
 
 type ClusterConfig struct {
@@ -86,10 +89,22 @@ func SetAutoScalingConfig(ctx context.Context, client client.Client, instance *o
 	if instance.Spec.Autoscaling.ImageID != "" {
 		config.AutoScalingConfig.ImageID = instance.Spec.Autoscaling.ImageID
 	}
+	if instance.Spec.Autoscaling.EnableRDMA {
+		config.AutoScalingConfig.EnableRDMA = true
+	}
+	if instance.Spec.Autoscaling.RDMAComputeClusterID != "" {
+		config.AutoScalingConfig.RDMAComputeClusterID = instance.Spec.Autoscaling.RDMAComputeClusterID
+	}
+	if instance.Spec.Autoscaling.RDMAFailureDomain != "" {
+		config.AutoScalingConfig.RDMAFailureDomain = instance.Spec.Autoscaling.RDMAFailureDomain
+	}
 	if err := ValidateRequiredConfigFields(config); err != nil {
 		return config, err
 	}
 	if err := ValidateBareMetalSubnetConfig(config); err != nil {
+		return config, err
+	}
+	if err := ValidateRDMAConfig(config); err != nil {
 		return config, err
 	}
 	if err := ValidateDefinedTagsNamespace(config); err != nil {
@@ -226,6 +241,22 @@ func ValidateBareMetalSubnetConfig(config Config) error {
 	}
 	if strings.TrimSpace(config.NetworkConfig.BareMetalSubnetName) == "" {
 		return fmt.Errorf("bare metal subnet name must not be empty for BM shapes")
+	}
+	return nil
+}
+
+func ValidateRDMAConfig(config Config) error {
+	if !config.AutoScalingConfig.EnableRDMA {
+		return nil
+	}
+	if !IsBareMetalShape(config.AutoScalingConfig.Shape) {
+		return fmt.Errorf("RDMA autoscaling requires a bare-metal shape")
+	}
+	if strings.TrimSpace(config.AutoScalingConfig.RDMAComputeClusterID) == "" {
+		return fmt.Errorf("RDMA compute cluster ID must not be empty when RDMA autoscaling is enabled")
+	}
+	if strings.TrimSpace(config.AutoScalingConfig.RDMAFailureDomain) == "" {
+		return fmt.Errorf("RDMA failure domain must not be empty when RDMA autoscaling is enabled")
 	}
 	return nil
 }

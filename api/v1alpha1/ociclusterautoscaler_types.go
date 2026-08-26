@@ -61,6 +61,18 @@ type AutoscalingConfig struct {
 	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="poolIdentifier is immutable"
 	PoolIdentifier string `json:"poolIdentifier,omitempty"`
+
+	// EnableRDMA places autoscaled nodes in an OCI Compute Cluster and enables the
+	// Compute HPC RDMA Authentication Oracle Cloud Agent plugin.
+	EnableRDMA bool `json:"enableRdma,omitempty"`
+
+	// RDMAComputeClusterID is the OCID of the OCI Compute Cluster used by
+	// the RDMA worker pool.
+	RDMAComputeClusterID string `json:"rdmaComputeClusterId,omitempty"`
+
+	// RDMAFailureDomain is the CAPI failure-domain key for the availability
+	// domain that contains the OCI Compute Cluster (for example, "1").
+	RDMAFailureDomain string `json:"rdmaFailureDomain,omitempty"`
 }
 
 // ShapeConfig contains OCI flexible shape configuration

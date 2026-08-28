@@ -21,7 +21,8 @@ type AutoscalerValues struct {
 		Namespace string `json:"namespace"`
 	} `json:"autoDiscovery"`
 	ExtraArgs struct {
-		ScanInterval string `json:"scan-interval"`
+		ScanInterval         string `json:"scan-interval"`
+		MaxNodeProvisionTime string `json:"max-node-provision-time"`
 	} `json:"extraArgs"`
 	RBAC struct {
 		Create         bool `json:"create"`
@@ -53,6 +54,15 @@ var _ = Describe("Autoscaler Values", func() {
 	})
 
 	Context("GetValuesString", func() {
+		It("should allow 30 minutes for node provisioning", func() {
+			valuesStr := GetValuesString(&defaultValues)
+
+			var values AutoscalerValues
+			err := yaml.Unmarshal([]byte(valuesStr), &values)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.ExtraArgs.MaxNodeProvisionTime).To(Equal("30m"))
+		})
+
 		It("should generate valid YAML", func() {
 			valuesStr := GetValuesString(&defaultValues)
 

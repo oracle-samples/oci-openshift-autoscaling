@@ -32,6 +32,7 @@ autoDiscovery:
   namespace: %s
 extraArgs:
   scan-interval: %s
+  max-node-provision-time: 30m
 rbac:
   create: %t
   serviceAccount:

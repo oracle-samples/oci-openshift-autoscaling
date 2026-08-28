@@ -45,6 +45,11 @@ spec:
               autoscaling:
                 description: Autoscaling configuration
                 properties:
+                  enableRdma:
+                    description: |-
+                      EnableRDMA places autoscaled nodes in an OCI Compute Cluster and enables the
+                      Compute HPC RDMA Authentication Oracle Cloud Agent plugin.
+                    type: boolean
                   imageId:
                     description: ImageID is the OCID of the custom RHCOS image for
                       deploying new nodes during autoscaling
@@ -71,6 +76,16 @@ spec:
                     x-kubernetes-validations:
                     - message: poolIdentifier is immutable
                       rule: self == oldSelf
+                  rdmaComputeClusterId:
+                    description: |-
+                      RDMAComputeClusterID is the OCID of the OCI Compute Cluster used by
+                      the RDMA worker pool.
+                    type: string
+                  rdmaFailureDomain:
+                    description: |-
+                      RDMAFailureDomain is the CAPI failure-domain key for the availability
+                      domain that contains the OCI Compute Cluster (for example, "1").
+                    type: string
                   shape:
                     description: nodeShape is the OCI compute shape for autoscaling
                       nodes

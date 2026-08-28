@@ -384,6 +384,24 @@ var _ = Describe("CAPI Components", func() {
 			}))
 		})
 
+		It("should configure RDMA Compute Cluster placement and the OCA plugin", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "BM.Optimized3.36"
+			cfg.AutoScalingConfig.EnableRDMA = true
+			cfg.AutoScalingConfig.RDMAComputeClusterID = "ocid1.computecluster.oc1..example"
+			cfg.NetworkConfig.BareMetalSubnetID = "test-bm-subnet"
+			obj, mutateFn := OCIMachineTemplate("oci-openshift-autoscaling-operator", "test-cluster", instance, cfg)
+			template := obj.(*infrastructurev1beta2.OCIMachineTemplate)
+
+			Expect(mutateFn()).To(Succeed())
+			Expect(template.Spec.Template.Spec.ComputeClusterId).NotTo(BeNil())
+			Expect(*template.Spec.Template.Spec.ComputeClusterId).To(Equal("ocid1.computecluster.oc1..example"))
+			Expect(template.Spec.Template.Spec.AgentConfig.PluginsConfig).To(ContainElement(infrastructurev1beta2.InstanceAgentPluginConfig{
+				Name:         swag.String("Compute HPC RDMA Authentication"),
+				DesiredState: infrastructurev1beta2.InstanceAgentPluginConfigDetailsDesiredStateEnabled,
+			}))
+		})
+
 		It("should merge bare metal boot-volume tags into existing namespace tags", func() {
 			cfg := config
 			cfg.NetworkConfig.BareMetalSubnetID = "test-bm-subnet"
@@ -614,6 +632,22 @@ var _ = Describe("CAPI Components", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
 			Expect(maxUnavailable).To(Equal(int64(1)))
+		})
+
+		It("should pin an RDMA MachineDeployment to the Compute Cluster availability domain", func() {
+			cfg := config
+			cfg.AutoScalingConfig.Shape = "BM.Optimized3.36"
+			cfg.AutoScalingConfig.EnableRDMA = true
+			cfg.AutoScalingConfig.RDMAComputeClusterID = "ocid1.computecluster.oc1..example"
+			cfg.AutoScalingConfig.RDMAFailureDomain = "1"
+			obj, mutateFn := MachineDeployment("oci-openshift-autoscaling-operator", "test-cluster", instance, cfg)
+			deployment := obj.(*unstructured.Unstructured)
+
+			Expect(mutateFn()).To(Succeed())
+			failureDomain, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "failureDomain")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(failureDomain).To(Equal("1"))
 		})
 
 		It("should preserve existing annotations", func() {

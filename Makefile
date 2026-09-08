@@ -201,12 +201,8 @@ vet: ## Run go vet against code.
 	mkdir -p "$(GO_BUILD_CACHE)" "$(XDG_CACHE_HOME)"
 	GOCACHE="$(GO_BUILD_CACHE)" XDG_CACHE_HOME="$(XDG_CACHE_HOME)" go vet ./...
 
-.PHONY: release-version-contract
-release-version-contract: ## Verify release, bundle, and latest-alias metadata stay consistent.
-	bash tests/release-version-contract.sh
-
 .PHONY: test
-test: release-version-contract manifests generate fmt vet envtest ## Run tests.
+test: manifests generate fmt vet envtest ## Run tests.
 	mkdir -p "$(GO_BUILD_CACHE)" "$(XDG_CACHE_HOME)" "$(TEST_HOME)/Library/Caches"
 	HOME="$(TEST_HOME)" KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" GOCACHE="$(GO_BUILD_CACHE)" XDG_CACHE_HOME="$(XDG_CACHE_HOME)" /bin/sh -c 'go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out'
 

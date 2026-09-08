@@ -1,11 +1,11 @@
 # Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
 
-# VERSION is only used by optional OLM bundle metadata generation.
-# Production deployment uses the Terraform stack and IMG, not this value.
-# Bundle and release targets require this to be set to a real release version.
-VERSION ?= 0.0.0
-IMAGE_TAG ?= latest
+# VERSION identifies the current stable Operator and OLM bundle release.
+# Bump this value for each release; customers following the stable channel are
+# upgraded to the newest version automatically.
+VERSION ?= 1.0.0
+IMAGE_TAG ?= v$(VERSION)
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -34,6 +34,7 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
 # $(IMAGE_TAG_BASE)-bundle:$IMAGE_TAG and $(IMAGE_TAG_BASE)-catalog:$IMAGE_TAG.
 IMAGE_TAG_BASE ?= ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling
+LATEST_IMG ?= $(IMAGE_TAG_BASE):latest
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -270,6 +271,11 @@ buildx: ## Build and push a multi-arch manager image manifest
 		$(CONTAINER_TOOL) buildx rm oci-capi-autoscaling-operator-builder || true; \
 	fi
 	rm .tmp/Dockerfile.cross
+
+.PHONY: publish-release-image
+publish-release-image: require-release-metadata buildx ## Publish the versioned image and advance the latest alias.
+	$(call require_qualified_image,$(LATEST_IMG))
+	$(CONTAINER_TOOL) buildx imagetools create --tag $(LATEST_IMG) $(IMG)
 
 .PHONY: build-installer
 build-installer: require-installer-image manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.

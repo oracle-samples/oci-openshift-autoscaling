@@ -65,13 +65,23 @@ Use that Terraform stack as the deployment source of truth. This repository keep
 
 ### Runtime Image
 
-The default deployment image is:
+The current stable release image is:
+
+```sh
+docker pull ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling:v1.0.0
+```
+
+The `latest` tag is maintained as a convenience alias to the current stable
+release:
 
 ```sh
 docker pull ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling:latest
 ```
 
-The Makefile and kustomize defaults use this image. Override `IMG` only for development builds, and keep it fully qualified with a registry host.
+OLM bundles and release artifacts use the immutable release tag rather than
+the `latest` alias. Customers subscribed to the `stable` channel receive the
+newest published release automatically. Override `IMG` only for development
+builds, and keep it fully qualified with a registry host.
 
 ### Development
 
@@ -93,7 +103,7 @@ Build a local development image:
 IMG=ghcr.io/<owner>/<repo>:<tag> make build-image
 ```
 
-Push and release targets such as `make push-image`, `make buildx`, `make bundle-push`, and `make catalog-push` refuse unqualified image names and mutable `:latest` tags.
+Push and release targets such as `make push-image`, `make buildx`, `make bundle-push`, and `make catalog-push` refuse unqualified image names and mutable `:latest` tags. Use `make publish-release-image` to publish the versioned multi-architecture image and then advance the `latest` alias to that release.
 
 ### Provider Version Compatibility
 

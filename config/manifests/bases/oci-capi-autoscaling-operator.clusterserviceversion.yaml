@@ -46,7 +46,7 @@ metadata:
     capabilities: Basic Install
     categories: Cloud Provider
     com.redhat.openshift.versions: v4.22
-    containerImage: ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling:latest
+    containerImage: ghcr.io/oracle-samples/openshift-oracle-capi-autoscaling:v1.0.0
     createdAt: "2026-07-17T00:00:00Z"
     description: Manages Cluster API based autoscaling for OpenShift clusters running
       on Oracle Cloud Infrastructure.
@@ -64,7 +64,7 @@ metadata:
   labels:
     operatorframework.io/arch.amd64: supported
     operatorframework.io/arch.arm64: supported
-  name: oci-capi-autoscaling-operator.v0.0.0
+  name: oci-capi-autoscaling-operator.v1.0.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -119,4 +119,4 @@ spec:
   provider:
     name: Oracle
     url: https://www.oracle.com/cloud/
-  version: 0.0.0
+  version: 1.0.0

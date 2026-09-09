@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: publish-image-main
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
@@ -18,7 +22,7 @@ env:
 
 jobs:
   publish:
-    name: Build and push latest image
+    name: Build and push image
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -38,17 +42,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push latest image
+      - name: Build and push image
         shell: bash
         run: |
           set -euo pipefail
 
           image="${IMAGE_REGISTRY}/${IMAGE_OWNER,,}/${IMAGE_NAME}"
+          version="$(awk '/^VERSION[[:space:]]*\?=/{print $3; exit}' Makefile)"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid VERSION in Makefile: ${version}" >&2
+            exit 1
+          fi
+
+          release_tag="v${version}"
+          tags=(--tag "${image}:latest")
+
+          if inspect_output="$(
+            docker buildx imagetools inspect \
+              "${image}:${release_tag}" \
+              2>&1
+          )"
+          then
+            echo "${image}:${release_tag} already exists; publishing latest only"
+          else
+            if [[ "${inspect_output}" == *"not found"* ]] ||
+              [[ "${inspect_output}" == *"manifest unknown"* ]] ||
+              [[ "${inspect_output}" == *"name unknown"* ]]
+            then
+              echo "${image}:${release_tag} does not exist; publishing it with latest"
+              tags+=(--tag "${image}:${release_tag}")
+            else
+              echo "Unable to inspect ${image}:${release_tag}:" >&2
+              echo "${inspect_output}" >&2
+              exit 1
+            fi
+          fi
 
           docker buildx build \
             --push \
             --platform=linux/amd64,linux/arm64 \
-            --tag "${image}:latest" \
+            "${tags[@]}" \
             --build-arg CAPOCI_VERSION="${CAPOCI_VERSION}" \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.description=OCI OpenShift autoscaling operator" \

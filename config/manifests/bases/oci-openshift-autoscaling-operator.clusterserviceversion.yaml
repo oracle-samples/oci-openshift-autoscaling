@@ -64,7 +64,7 @@ metadata:
   labels:
     operatorframework.io/arch.amd64: supported
     operatorframework.io/arch.arm64: supported
-  name: oci-capi-autoscaling-operator.v1.0.0
+  name: oci-openshift-autoscaling-operator.v1.0.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}

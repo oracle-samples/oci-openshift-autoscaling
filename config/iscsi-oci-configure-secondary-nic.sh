@@ -38,7 +38,7 @@ function extract_prefix {
 # Get the secondary interface name based on the dynamic prefix
 function get_secondary_if_name_by_prefix {
   prefix="${1}"
-  all_interfaces=$(ip -json link show | jq --raw-output '.[].ifname')
+  all_interfaces=$(ip -json link show | jq --raw-output '.[] | select(.operstate == "UP") | .ifname')
 
   for ifname in ${all_interfaces}; do
     if [[ "${ifname}" == "${prefix}"* && "${ifname}" != "${primary_if_name}" ]]; then
@@ -82,7 +82,12 @@ if [[ -z "${secondary_if_name}" || "${secondary_if_name}" == "null" ]]; then
   if [ "${secondary_if_vlan_tag}" -ne 0 ]; then
     echo "VLAN Tag is not 0, network configuration needs to be modified at the VLAN level"
     if [ ! -f "/etc/NetworkManager/system-connections/${secondary_if_name}.nmconnection" ]; then
-        nmcli connection add type vlan con-name "${secondary_if_name}.${secondary_if_vlan_tag}" ifname "${secondary_if_name}.${secondary_if_vlan_tag}" dev "${secondary_if_name}" id "${secondary_if_vlan_tag}" ip4 "${secondary_if_ip_address}/${secondary_if_subnet_size}" gw4 "${secondary_if_default_gateway}"
+        secondary_if_mtu=$(ip -json link show "${secondary_if_name}" | jq --raw-output '.[0].mtu')
+        if [ "${secondary_if_mtu}" != "${MTU}" ]; then
+          echo "Interface ${secondary_if_name} MTU is ${secondary_if_mtu}, setting to ${MTU}"
+          nmcli connection add type ethernet con-name "${secondary_if_name}" ifname "${secondary_if_name}" ipv4.method disabled ipv6.method disabled 802-3-ethernet.mtu ${MTU}
+        fi
+        nmcli connection add type vlan con-name "${secondary_if_name}.${secondary_if_vlan_tag}" ifname "vlan.${secondary_if_vlan_tag}" dev "${secondary_if_name}" id "${secondary_if_vlan_tag}" ip4 "${secondary_if_ip_address}/${secondary_if_subnet_size}" gw4 "${secondary_if_default_gateway}"
         nmcli connection modify "${secondary_if_name}.${secondary_if_vlan_tag}" 802-3-ethernet.cloned-mac-address "${secondary_if_mac_address}"
         nmcli connection modify "${secondary_if_name}.${secondary_if_vlan_tag}" 802-3-ethernet.mtu ${MTU}
         nmcli connection modify "${secondary_if_name}.${secondary_if_vlan_tag}" ipv4.route-metric 0

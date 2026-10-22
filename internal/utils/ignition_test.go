@@ -67,6 +67,30 @@ func TestSecondaryNICScriptInvariants(t *testing.T) {
 	}
 }
 
+func TestSecondaryNICScriptFiltersFallbackInterfacesByOperstate(t *testing.T) {
+	script := oconfig.SecondaryNICScript
+	want := `.[] | select(.operstate == "UP") | .ifname`
+	if !strings.Contains(script, want) {
+		t.Fatalf("SecondaryNICScript must select only UP interfaces during fallback lookup")
+	}
+}
+
+func TestSecondaryNICScriptConfiguresVLANParentMTU(t *testing.T) {
+	script := oconfig.SecondaryNICScript
+	want := `nmcli connection add type ethernet con-name "${secondary_if_name}" ifname "${secondary_if_name}" ipv4.method disabled ipv6.method disabled 802-3-ethernet.mtu ${MTU}`
+	if !strings.Contains(script, want) {
+		t.Fatalf("SecondaryNICScript must persist MTU on the VLAN parent connection")
+	}
+}
+
+func TestSecondaryNICScriptUsesStableVLANInterfaceName(t *testing.T) {
+	script := oconfig.SecondaryNICScript
+	want := `ifname "vlan.${secondary_if_vlan_tag}"`
+	if !strings.Contains(script, want) {
+		t.Fatalf("SecondaryNICScript must name the VLAN interface vlan.<tag>")
+	}
+}
+
 func TestISCSIProtectPrimaryRouteScriptInvariants(t *testing.T) {
 	script := strings.TrimSpace(iscsiProtectPrimaryRouteScript)
 	if script == "" {

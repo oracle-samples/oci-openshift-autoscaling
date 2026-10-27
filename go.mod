@@ -3,7 +3,9 @@
 
 module github.com/openshift/oci-capi-operator
 
-go 1.25.0
+go 1.26.0
+
+toolchain go1.26.1
 
 require (
 	github.com/coreos/ignition/v2 v2.22.0

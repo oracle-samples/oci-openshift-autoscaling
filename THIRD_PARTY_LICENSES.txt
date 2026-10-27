@@ -199,8 +199,8 @@ sigs.k8s.io/yaml,Apache-2.0
 
 Runtime and build-time container/base images
 --------------------------------------------
-- golang:1.24 - Go project Docker image. License: BSD-3-Clause for Go; image contents include additional third-party components.
-- gcr.io/distroless/static:nonroot - Distroless static nonroot base image. License: Apache-2.0 for the distroless project; image contents include additional third-party components.
+- golang:1.26 - Go project Docker image. License: BSD-3-Clause for Go; image contents include additional third-party components.
+- container-registry.oracle.com/os/oraclelinux:9-slim-fips-pqc - Oracle Linux runtime base image; image contents retain their component-specific license notices.
 
 Runtime components referenced by the Operator
 ---------------------------------------------

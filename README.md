@@ -87,7 +87,7 @@ builds, and keep it fully qualified with a registry host.
 
 Local prerequisites:
 
-- Go `1.24+` matching `go.mod`
+- Go `1.26+` matching `go.mod`
 - Docker or another compatible container tool
 - `oc` and a kubeconfig only when running cluster verification or cleanup helpers
 
@@ -104,6 +104,14 @@ IMG=ghcr.io/<owner>/<repo>:<tag> make build-image
 ```
 
 Push and release targets such as `make push-image`, `make buildx`, `make bundle-push`, and `make catalog-push` refuse unqualified image names and mutable `:latest` tags. Use `make publish-release-image` to publish the versioned multi-architecture image and then advance the `latest` alias to that release.
+
+### PQC Runtime Baseline
+
+Manager images use Go 1.26 and Oracle Linux 9.8 or later. Image builds reject an older Oracle Linux runtime. Both Dockerfiles build from the vendored Go dependencies with `CGO_ENABLED=0`; the operator uses Go's TLS implementation.
+
+Go 1.26 enables hybrid ML-KEM key exchanges by default. Keep the module's Go version current and avoid `GODEBUG=tlsmlkem=0` or `GODEBUG=tlssecpmlkem=0` overrides. Classical TLS fallback remains available for peers that do not support PQC.
+
+CAPI, CAPOCI, cluster-autoscaler, and target API servers have independent runtime and TLS configuration. Their PQC readiness must be verified separately from the operator image.
 
 ### Provider Version Compatibility
 

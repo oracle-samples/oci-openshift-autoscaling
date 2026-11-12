@@ -3,14 +3,16 @@
 
 # Build the manager binary
 # Use the native build platform for the builder stage to avoid emulation-related
-# crashes (seen as SIGSEGV in `go mod download` on Apple Silicon when targeting
-# linux/amd64).
-ARG OEL_BASE_IMAGE=container-registry.oracle.com/os/oraclelinux:7-slim
-FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
+# crashes on Apple Silicon when targeting
+# linux/amd64.
+ARG OEL_BASE_IMAGE=container-registry.oracle.com/os/oraclelinux:9-slim-fips-pqc
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 ARG BUILDPLATFORM
 ARG TARGETPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
+
+ENV GOTOOLCHAIN=local
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -42,7 +44,7 @@ RUN sed -i.bak \
 
 RUN mkdir -p /workspace/licenses && cp LICENSE.txt THIRD_PARTY_LICENSES.txt /workspace/licenses/
 
-# Use Oracle Linux 7 as the runtime base image.
+# Use Oracle Linux 9.8 or later as the runtime base image.
 FROM ${OEL_BASE_IMAGE}
 ARG VERSION=0.0.0
 ARG RELEASE=1
@@ -54,6 +56,9 @@ LABEL name="oci-capi-autoscaling-operator" \
       summary="OCI OpenShift autoscaling operator" \
       description="Operator that manages Cluster API based autoscaling for OpenShift clusters running on Oracle Cloud Infrastructure."
 WORKDIR /
+RUN microdnf update -y && microdnf clean all && \
+    . /etc/os-release && test "$ID" = "ol" && \
+    test "${VERSION_ID%%.*}" = "9" && test "${VERSION_ID#*.}" -ge 8
 RUN mkdir -p /.config /licenses && chown -R 65532:65532 /.config /licenses
 COPY --from=builder /workspace/manager /manager
 # The following is needed for clusterctl to generate component configs during runtime
